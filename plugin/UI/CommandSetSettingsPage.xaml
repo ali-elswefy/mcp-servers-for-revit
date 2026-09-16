@@ -17,6 +17,9 @@
             <TextBlock Text="Command Set Settings" FontSize="22" FontWeight="SemiBold"/>
             <TextBlock Text="Select the commands you want to enable" 
                        Foreground="#666666" Margin="0,5,0,0"/>
+            <CheckBox x:Name="AutoStartCheckBox"
+                      Content="Start MCP server automatically when Revit starts"
+                      Margin="0,12,0,0"/>
         </StackPanel>
         <!-- Main Content Area -->
         <Grid Grid.Row="1">

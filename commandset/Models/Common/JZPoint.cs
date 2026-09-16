@@ -3,19 +3,19 @@
 namespace RevitMCPCommandSet.Models.Common;
 
 /// <summary>
-///     三维点
+///     Three-dimensional point
 /// </summary>
 public class JZPoint
 {
     /// <summary>
-    ///     构造函数
+    ///     Constructor
     /// </summary>
     public JZPoint()
     {
     }
 
     /// <summary>
-    ///     构造函数
+    ///     Constructor
     /// </summary>
     public JZPoint(double x, double y, double z)
     {
@@ -25,7 +25,7 @@ public class JZPoint
     }
 
     /// <summary>
-    ///     构造函数
+    ///     Constructor
     /// </summary>
     public JZPoint(double x, double y)
     {
@@ -41,8 +41,8 @@ public class JZPoint
     [JsonProperty("z")] public double Z { get; set; }
 
     /// <summary>
-    ///     转换为Revit的XYZ点
-    ///     单位转换：mm -> ft
+    ///     Converts to a Revit XYZ point
+    ///     Converts units from millimeters to feet
     /// </summary>
     public static XYZ ToXYZ(JZPoint jzPoint)
     {

@@ -59,7 +59,7 @@ The **MCP Server** (TypeScript) translates tool calls from AI clients into WebSo
 
 4. Start Revit — if prompted about an unknown add-in, click **Always Load**
 
-5. In Revit, click the **Settings** button on the mcp-servers-for-revit ribbon tab, enable the commands you want to use, and click **Save**
+5. In Revit, click the **Settings** button on the mcp-servers-for-revit ribbon tab, enable the commands you want to use, optionally enable automatic server startup, and click **Save**
 
 ## MCP Server Setup
 

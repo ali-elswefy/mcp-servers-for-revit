@@ -13,24 +13,24 @@ namespace RevitMCPCommandSet.Services
         private Document doc => uiDoc.Document;
         private Autodesk.Revit.ApplicationServices.Application app => uiApp.Application;
         /// <summary>
-        /// 事件等待对象
+        /// Event wait handle
         /// </summary>
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
         /// <summary>
-        /// 创建数据（传入数据）
+        /// Creation data (input)
         /// </summary>
         public List<LineElement> CreatedInfo { get; private set; }
         /// <summary>
-        /// 执行结果（传出数据）
+        /// Execution result (output)
         /// </summary>
         public AIResult<List<int>> Result { get; private set; }
         private List<string> _warnings = new List<string>();
 
-        public string _wallName = "常规 - ";
-        public string _ductName = "矩形风管 - ";
+        public string _wallName = "Generic - ";
+        public string _ductName = "Rectangular Duct - ";
 
         /// <summary>
-        /// 设置创建的参数
+        /// Sets the creation parameters
         /// </summary>
         public void SetParameters(List<LineElement> data)
         {
@@ -49,11 +49,11 @@ namespace RevitMCPCommandSet.Services
                 {
                     int requestedTypeId = data.TypeId;
 
-                    // Step0 获取构件类型
+                    // Step 0: Get the element type
                     BuiltInCategory builtInCategory = BuiltInCategory.INVALID;
                     Enum.TryParse(data.Category.Replace(".", ""), true, out builtInCategory);
 
-                    // Step1 获取标高和偏移
+                    // Step 1: Get levels and offsets
                     Level baseLevel = null;
                     Level topLevel = null;
                     double topOffset = -1;  // ft
@@ -65,7 +65,7 @@ namespace RevitMCPCommandSet.Services
                     if (baseLevel == null)
                         continue;
 
-                    // Step2 获取族类型
+                    // Step 2: Get the family type
                     FamilySymbol symbol = null;
                     WallType wallType = null;
                     DuctType ductType = null;
@@ -79,7 +79,7 @@ namespace RevitMCPCommandSet.Services
                             if (typeEle != null && typeEle is FamilySymbol)
                             {
                                 symbol = typeEle as FamilySymbol;
-                                // 获取symbol的Category对象并转换为BuiltInCategory枚举
+                                // Get the symbol category and convert it to BuiltInCategory
                                 builtInCategory = (BuiltInCategory)symbol.Category.Id.GetIntValue();
                             }
                             else if (typeEle != null && typeEle is WallType)
@@ -143,7 +143,7 @@ namespace RevitMCPCommandSet.Services
                                     .OfClass(typeof(FamilySymbol))
                                     .OfCategory(builtInCategory)
                                     .Cast<FamilySymbol>()
-                                    .FirstOrDefault(fs => fs.IsActive); // 获取激活的类型作为默认类型
+                                    .FirstOrDefault(fs => fs.IsActive); // Use an active type as the default
                                 if (symbol == null)
                                 {
                                     symbol = new FilteredElementCollector(doc)
@@ -165,8 +165,8 @@ namespace RevitMCPCommandSet.Services
                             break;
                     }
 
-                    // Step3 调用通用方法创建族实例
-                    using (Transaction transaction = new Transaction(doc, "创建点状构件"))
+                    // Step 3: Call the general method to create a family instance
+                    using (Transaction transaction = new Transaction(doc, "Create Line-Based Element"))
                     {
                         transaction.Start();
                         switch (builtInCategory)
@@ -191,7 +191,7 @@ namespace RevitMCPCommandSet.Services
                                 break;
                             case BuiltInCategory.OST_DuctCurves:
                                 Duct duct = null;
-                                // 获取MEP系统类型（必需）
+                                // Get the required MEP system type
                                 MEPSystemType mepSystemType = new FilteredElementCollector(doc)
                                     .OfClass(typeof(MEPSystemType))
                                     .Cast<MEPSystemType>()
@@ -210,7 +210,7 @@ namespace RevitMCPCommandSet.Services
 
                                     if (duct != null)
                                     {
-                                        // 设置高度偏移
+                                        // Set the elevation offset
                                         Parameter offsetParam = duct.get_Parameter(BuiltInParameter.RBS_OFFSET_PARAM);
                                         if (offsetParam != null)
                                             offsetParam.Set(baseOffset);
@@ -222,7 +222,7 @@ namespace RevitMCPCommandSet.Services
                                 if (!symbol.IsActive)
                                     symbol.Activate();
 
-                                // 调用FamilyInstance通用创建方法
+                                // Call the general FamilyInstance creation method
                                 var instance = doc.CreateInstance(symbol, null, JZLine.ToLine(data.LocationLine), baseLevel, topLevel, baseOffset, topOffset);
                                 if (instance != null)
                                 {
@@ -251,21 +251,21 @@ namespace RevitMCPCommandSet.Services
                 Result = new AIResult<List<int>>
                 {
                     Success = false,
-                    Message = $"创建线状构件时出错: {ex.Message}",
+                    Message = $"Error creating line-based element: {ex.Message}",
                 };
-                TaskDialog.Show("错误", $"创建线状构件时出错: {ex.Message}");
+                TaskDialog.Show("Error", $"Error creating line-based element: {ex.Message}");
             }
             finally
             {
-                _resetEvent.Set(); // 通知等待线程操作已完成
+                _resetEvent.Set(); // Notify the waiting thread that the operation is complete
             }
         }
 
         /// <summary>
-        /// 等待创建完成
+        /// Waits for creation to complete
         /// </summary>
-        /// <param name="timeoutMilliseconds">超时时间（毫秒）</param>
-        /// <returns>操作是否在超时前完成</returns>
+        /// <param name="timeoutMilliseconds">Timeout in milliseconds</param>
+        /// <returns>Whether the operation completed before the timeout</returns>
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
         {
             _resetEvent.Reset();
@@ -273,36 +273,38 @@ namespace RevitMCPCommandSet.Services
         }
 
         /// <summary>
-        /// IExternalEventHandler.GetName 实现
+        /// IExternalEventHandler.GetName implementation
         /// </summary>
         public string GetName()
         {
-            return "创建线状构件";
+            return "Create Line-Based Element";
         }
 
         /// <summary>
-        /// 创建或获取指定厚度的墙体类型
+        /// Creates or gets a wall type with the specified thickness
         /// </summary>
-        /// <param name="doc">Revit文档</param>
-        /// <param name="width">宽度（ft）</param>
+        /// <param name="doc">Revit document</param>
+        /// <param name="width">Width in feet</param>
         /// <returns></returns>
         /// <exception cref="InvalidOperationException"></exception>
         private WallType CreateOrGetWallType(Document doc, double width = 200 / 304.8)
         {
-            // 如果没有有效的类型
-            // 先查找是否存在指定厚度的建筑墙类型
+            // First look for a wall type with the specified thickness
+            string legacyTypeName = $"\u5E38\u89C4 - {width * 304.8}mm";
             WallType existingType = new FilteredElementCollector(doc)
                                     .OfClass(typeof(WallType))
                                     .Cast<WallType>()
-                                    .FirstOrDefault(w => w.Name == $"{_wallName}{width * 304.8}mm");
+                                    .FirstOrDefault(w => w.Name == $"{_wallName}{width * 304.8}mm" ||
+                                                         w.Name == legacyTypeName);
             if (existingType != null)
                 return existingType;
 
-            // 不存在则创建新的墙体类型，基于基本墙
+            // Create a new wall type from a basic wall type if none exists
             WallType baseWallType = new FilteredElementCollector(doc)
                                     .OfClass(typeof(WallType))
                                     .Cast<WallType>()
-                                    .FirstOrDefault(w => w.Name.Contains("常规")); ;
+                                    .FirstOrDefault(w => w.Name.Contains("Generic") ||
+                                                         w.Name.Contains("\u5E38\u89C4")); ;
             if (baseWallType == null)
             {
                 baseWallType = new FilteredElementCollector(doc)
@@ -312,69 +314,71 @@ namespace RevitMCPCommandSet.Services
             }
 
             if (baseWallType == null)
-                throw new InvalidOperationException("未找到可用的基础墙类型");
+                throw new InvalidOperationException("No suitable base wall type was found.");
 
-            // 复制墙体类型
+            // Duplicate the wall type
             WallType newWallType = null;
             newWallType = baseWallType.Duplicate($"{_wallName}{width * 304.8}mm") as WallType;
 
-            // 设置墙厚
+            // Set the wall thickness
             CompoundStructure cs = newWallType.GetCompoundStructure();
             if (cs != null)
             {
-                // 获取原始层的材料ID
+                // Get the original layer's material ID
                 ElementId materialId = cs.GetLayers().First().MaterialId;
 
-                // 创建新的单层结构
+                // Create a new single-layer structure
                 CompoundStructureLayer newLayer = new CompoundStructureLayer(
-                    width,  // 宽度（转换为英尺）
-                    MaterialFunctionAssignment.Structure,  // 功能分配
-                    materialId  // 材料ID
+                    width,  // Width in feet
+                    MaterialFunctionAssignment.Structure,  // Function assignment
+                    materialId  // Material ID
                 );
 
-                // 创建新的复合结构
+                // Create a new compound structure
                 IList<CompoundStructureLayer> newLayers = new List<CompoundStructureLayer> { newLayer };
                 cs.SetLayers(newLayers);
 
-                // 应用新的复合结构
+                // Apply the new compound structure
                 newWallType.SetCompoundStructure(cs);
             }
             return newWallType;
         }
 
         /// <summary>
-        /// 创建或获取指定尺寸的风管类型
+        /// Creates or gets a duct type with the specified dimensions
         /// </summary>
-        /// <param name="doc">Revit文档</param>
-        /// <param name="width">宽度（ft）</param>
-        /// <param name="height">高度（ft）</param>
-        /// <returns>风管类型</returns>
+        /// <param name="doc">Revit document</param>
+        /// <param name="width">Width in feet</param>
+        /// <param name="height">Height in feet</param>
+        /// <returns>Duct type</returns>
         private DuctType CreateOrGetDuctType(Document doc, double width, double height)
         {
             string typeName = $"{_ductName}{width * 304.8}x{height * 304.8}mm";
+            string legacyTypeName = $"\u77E9\u5F62\u98CE\u7BA1 - {width * 304.8}x{height * 304.8}mm";
 
-            // 先查找是否存在指定尺寸的风管类型
+            // First look for a duct type with the specified dimensions
             DuctType existingType = new FilteredElementCollector(doc)
                                     .OfClass(typeof(DuctType))
                                     .Cast<DuctType>()
-                                    .FirstOrDefault(d => d.Name == typeName && d.Shape == ConnectorProfileType.Rectangular);
+                                    .FirstOrDefault(d => (d.Name == typeName || d.Name == legacyTypeName) &&
+                                                         d.Shape == ConnectorProfileType.Rectangular);
 
             if (existingType != null)
                 return existingType;
 
-            // 不存在则创建新的风管类型，基于已有的矩形风管类型
+            // Create a new duct type from an existing rectangular type if none exists
             DuctType baseDuctType = new FilteredElementCollector(doc)
                                     .OfClass(typeof(DuctType))
                                     .Cast<DuctType>()
                                     .FirstOrDefault(d => d.Shape == ConnectorProfileType.Rectangular);
 
             if (baseDuctType == null)
-                throw new InvalidOperationException("未找到可用的基础矩形风管类型");
+                throw new InvalidOperationException("No suitable base rectangular duct type was found.");
 
-            // 复制风管类型
+            // Duplicate the duct type
             DuctType newDuctType = baseDuctType.Duplicate(typeName) as DuctType;
 
-            // 设置风管尺寸参数
+            // Set the duct dimension parameters
             Parameter widthParam = newDuctType.get_Parameter(BuiltInParameter.RBS_CURVE_WIDTH_PARAM);
             Parameter heightParam = newDuctType.get_Parameter(BuiltInParameter.RBS_CURVE_HEIGHT_PARAM);
 
