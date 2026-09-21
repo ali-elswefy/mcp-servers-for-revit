@@ -2,30 +2,23 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
 
-export function registerGetSelectedElementsTool(server: McpServer) {
+export function registerSetSelectedElementsTool(server: McpServer) {
   server.tool(
-    "get_selected_elements",
-    "Get elements currently selected in Revit. You can limit the number of returned elements.",
+    "set_selected_elements",
+    "Set the elements selected in Revit by their element IDs. Pass an empty array to clear the selection.",
     {
-      limit: z
-        .number()
-        .optional()
-        .describe("Maximum number of elements to return"),
-      includeRelationships: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Include native host and group relationship metadata for each selected element"),
+      elementIds: z
+        .array(z.number().int())
+        .describe("The Revit element IDs to select; use an empty array to clear the selection"),
     },
     async (args, extra) => {
       const params = {
-        limit: args.limit || 100,
-        includeRelationships: args.includeRelationships || false,
+        elementIds: args.elementIds,
       };
 
       try {
         const response = await withRevitConnection(async (revitClient) => {
-          return await revitClient.sendCommand("get_selected_elements", params);
+          return await revitClient.sendCommand("set_selected_elements", params);
         });
 
         return {
@@ -41,7 +34,7 @@ export function registerGetSelectedElementsTool(server: McpServer) {
           content: [
             {
               type: "text",
-              text: `get selected elements failed: ${
+              text: `set selected elements failed: ${
                 error instanceof Error ? error.message : String(error)
               }`,
             },

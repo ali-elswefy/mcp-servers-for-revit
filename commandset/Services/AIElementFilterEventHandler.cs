@@ -55,9 +55,14 @@ namespace RevitMCPCommandSet.Services
                 if (!FilterSetting.Validate(out string errorMessage))
                     throw new Exception(errorMessage);
                 // Get elements matching the specified criteria.
-                var elementList = GetFilteredElements(doc, FilterSetting);
+                var elementList = GetFilteredElements(doc, FilterSetting).ToList();
+                if (FilterSetting.ExpandGroups)
+                {
+                    elementList = ElementRelationshipUtils.ExpandGroups(doc, elementList);
+                }
                 if (elementList == null || !elementList.Any())
                     throw new Exception("No matching elements were found in the project. Check the filter settings.");
+                int matchingElementCount = elementList.Count;
                 // Enforce the maximum result count.
                 string message = "";
                 if (FilterSetting.MaxElements > 0)
@@ -65,12 +70,20 @@ namespace RevitMCPCommandSet.Services
                     if (elementList.Count > FilterSetting.MaxElements)
                     {
                         elementList = elementList.Take(FilterSetting.MaxElements).ToList();
-                        message = $" In addition, {elementList.Count} elements match the filter; only the first {FilterSetting.MaxElements} are shown.";
+                        message = $" In addition, {matchingElementCount} elements match the filter; only the first {FilterSetting.MaxElements} are shown.";
                     }
                 }
 
                 // Get information for the matching elements.
-                elementInfoList = GetElementFullInfo(doc, elementList);
+                var hostedElementIndex = FilterSetting.IncludeRelationships || FilterSetting.ExpandGroups
+                    ? ElementRelationshipUtils.BuildHostedElementIndex(doc)
+                    : null;
+                elementInfoList = GetElementFullInfo(
+                    doc,
+                    elementList,
+                    FilterSetting.IncludeRelationships || FilterSetting.ExpandGroups,
+                    FilterSetting.ExpandGroups,
+                    hostedElementIndex);
 
                 Result = new AIResult<List<object>>
                 {
@@ -153,6 +166,8 @@ namespace RevitMCPCommandSet.Services
                 result = GetElementsByKind(doc, settings, true, appliedFilters);
             }
 
+            ApplyRelationshipFilters(doc, settings, result);
+
             // Log applied filters.
             if (appliedFilters.Count > 0)
             {
@@ -161,6 +176,35 @@ namespace RevitMCPCommandSet.Services
             }
             return result;
 
+        }
+
+        private static void ApplyRelationshipFilters(Document doc, FilterSetting settings, List<Element> elements)
+        {
+            if (!settings.FilterHostElementId.HasValue && !settings.FilterGroupId.HasValue)
+                return;
+
+            if (settings.FilterHostElementId.HasValue)
+            {
+                ElementId hostId = RevitMCPCommandSet.Utils.ElementIdExtensions.Create(settings.FilterHostElementId.Value);
+                if (doc.GetElement(hostId) == null)
+                    throw new ArgumentException($"Host element ID {settings.FilterHostElementId.Value} was not found in the active document.");
+
+                elements.RemoveAll(element => !ElementRelationshipUtils.HasHost(element, settings.FilterHostElementId.Value));
+            }
+
+            if (settings.FilterGroupId.HasValue)
+            {
+                ElementId groupId = RevitMCPCommandSet.Utils.ElementIdExtensions.Create(settings.FilterGroupId.Value);
+                if (!(doc.GetElement(groupId) is Group))
+                    throw new ArgumentException($"Group element ID {settings.FilterGroupId.Value} was not found in the active document.");
+
+                elements.RemoveAll(element => !ElementRelationshipUtils.BelongsToGroup(element, settings.FilterGroupId.Value));
+            }
+
+            if (settings.FilterHostElementId.HasValue)
+                System.Diagnostics.Trace.WriteLine($"Host element: {settings.FilterHostElementId.Value}");
+            if (settings.FilterGroupId.HasValue)
+                System.Diagnostics.Trace.WriteLine($"Group: {settings.FilterGroupId.Value}");
         }
 
         /// <summary>
@@ -237,7 +281,7 @@ namespace RevitMCPCommandSet.Services
             // 3. Family symbol filter (instances only).
             if (!isElementType && settings.FilterFamilySymbolId > 0)
             {
-                ElementId symbolId = new ElementId(settings.FilterFamilySymbolId);
+                ElementId symbolId = RevitMCPCommandSet.Utils.ElementIdExtensions.Create(settings.FilterFamilySymbolId);
                 // Verify that the element exists and is a family symbol.
                 Element symbolElement = doc.GetElement(symbolId);
                 if (symbolElement != null && symbolElement is FamilySymbol)
@@ -288,19 +332,41 @@ namespace RevitMCPCommandSet.Services
         /// <summary>
         /// Gets model element information.
         /// </summary>
-        public static List<object> GetElementFullInfo(Document doc, IList<Element> elementCollector)
+        public static List<object> GetElementFullInfo(
+            Document doc,
+            IList<Element> elementCollector,
+            bool includeRelationships = false,
+            bool includeGroupMembers = false,
+            IReadOnlyDictionary<long, List<ElementReferenceInfo>> hostedElementIndex = null)
         {
             List<object> infoList = new List<object>();
+
+            if (includeRelationships && hostedElementIndex == null)
+            {
+                hostedElementIndex = ElementRelationshipUtils.BuildHostedElementIndex(doc);
+            }
 
             // Process each element.
             foreach (var element in elementCollector)
             {
+                // Groups and links are handled first so group metadata is not lost
+                // to a generic category classification.
+                if (element is Group || element is RevitLinkInstance)
+                {
+                    var info = CreateGroupOrLinkInfo(doc, element);
+                    if (info != null)
+                    {
+                        AttachRelationships(doc, element, info, includeRelationships, includeGroupMembers, hostedElementIndex);
+                        infoList.Add(info);
+                    }
+                }
                 // Get information for physical model instances.
-                if (element?.Category?.HasMaterialQuantities ?? false)
+                else if (element?.Category?.HasMaterialQuantities ?? false)
                 {
                     var info = CreateElementFullInfo(doc, element);
                     if (info != null)
                     {
+                        AttachRelationships(doc, element, info, includeRelationships, includeGroupMembers, hostedElementIndex);
                         infoList.Add(info);
                     }
                 }
@@ -310,6 +376,7 @@ namespace RevitMCPCommandSet.Services
                     var info = CreateTypeFullInfo(doc, elementType);
                     if (info != null)
                     {
+                        AttachRelationships(doc, element, info, includeRelationships, includeGroupMembers, hostedElementIndex);
                         infoList.Add(info);
                     }
                 }
@@ -319,6 +386,7 @@ namespace RevitMCPCommandSet.Services
                     var info = CreatePositioningElementInfo(doc, element);
                     if (info != null)
                     {
+                        AttachRelationships(doc, element, info, includeRelationships, includeGroupMembers, hostedElementIndex);
                         infoList.Add(info);
                     }
                 }
@@ -328,6 +396,7 @@ namespace RevitMCPCommandSet.Services
                     var info = CreateSpatialElementInfo(doc, element);
                     if (info != null)
                     {
+                        AttachRelationships(doc, element, info, includeRelationships, includeGroupMembers, hostedElementIndex);
                         infoList.Add(info);
                     }
                 }
@@ -337,6 +406,7 @@ namespace RevitMCPCommandSet.Services
                     var info = CreateViewInfo(doc, element);
                     if (info != null)
                     {
+                        AttachRelationships(doc, element, info, includeRelationships, includeGroupMembers, hostedElementIndex);
                         infoList.Add(info);
                     }
                 }
@@ -348,30 +418,41 @@ namespace RevitMCPCommandSet.Services
                     var info = CreateAnnotationInfo(doc, element);
                     if (info != null)
                     {
+                        AttachRelationships(doc, element, info, includeRelationships, includeGroupMembers, hostedElementIndex);
                         infoList.Add(info);
                     }
                 }
-                // 7. Groups and links.
-                else if (element is Group || element is RevitLinkInstance)
-                {
-                    var info = CreateGroupOrLinkInfo(doc, element);
-                    if (info != null)
-                    {
-                        infoList.Add(info);
-                    }
-                }
-                // 8. Basic element information as a fallback.
+                // Basic element information as a fallback.
                 else
                 {
                     var info = CreateElementBasicInfo(doc, element);
                     if (info != null)
                     {
+                        AttachRelationships(doc, element, info, includeRelationships, includeGroupMembers, hostedElementIndex);
                         infoList.Add(info);
                     }
                 }
             }
 
             return infoList;
+        }
+
+        private static void AttachRelationships(
+            Document doc,
+            Element element,
+            object info,
+            bool includeRelationships,
+            bool includeGroupMembers,
+            IReadOnlyDictionary<long, List<ElementReferenceInfo>> hostedElementIndex)
+        {
+            if (!includeRelationships || !(info is IElementRelationshipContainer container))
+                return;
+
+            container.Relationships = ElementRelationshipUtils.GetRelationships(
+                doc,
+                element,
+                includeGroupMembers,
+                hostedElementIndex);
         }
 
         /// <summary>
@@ -386,7 +467,7 @@ namespace RevitMCPCommandSet.Services
 
                 ElementInstanceInfo elementInfo = new ElementInstanceInfo();        // Create the custom class for complete element information.
                 // ID
-                elementInfo.Id = element.Id.GetIntValue();
+                elementInfo.Id = element.Id.GetValue();
                 // UniqueId
                 elementInfo.UniqueId = element.UniqueId;
                 // Type name.
@@ -398,10 +479,10 @@ namespace RevitMCPCommandSet.Services
                 // Built-in category.
                 elementInfo.BuiltInCategory = Enum.GetName(typeof(BuiltInCategory), element.Category.Id.GetIntValue());
                 // Type ID.
-                elementInfo.TypeId = element.GetTypeId().GetIntValue();
+                elementInfo.TypeId = element.GetTypeId().GetValue();
                 // Containing room ID.
                 if (element is FamilyInstance instance)
-                    elementInfo.RoomId = instance.Room?.Id.GetIntValue() ?? -1;
+                    elementInfo.RoomId = instance.Room?.Id.GetValue() ?? -1;
                 // Level.
                 elementInfo.Level = GetElementLevel(doc, element);
                 // Bounding box.
@@ -438,7 +519,7 @@ namespace RevitMCPCommandSet.Services
         {
             ElementTypeInfo typeInfo = new ElementTypeInfo();
             // Id
-            typeInfo.Id = elementType.Id.GetIntValue();
+            typeInfo.Id = elementType.Id.GetValue();
             // UniqueId
             typeInfo.UniqueId = elementType.UniqueId;
             // Type name.
@@ -470,7 +551,7 @@ namespace RevitMCPCommandSet.Services
                     return null;
                 PositioningElementInfo info = new PositioningElementInfo
                 {
-                    Id = element.Id.GetIntValue(),
+                    Id = element.Id.GetValue(),
                     UniqueId = element.UniqueId,
                     Name = element.Name,
                     FamilyName = element?.get_Parameter(BuiltInParameter.ELEM_FAMILY_PARAM)?.AsValueString(),
@@ -525,7 +606,7 @@ namespace RevitMCPCommandSet.Services
                 SpatialElement spatialElement = element as SpatialElement;
                 SpatialElementInfo info = new SpatialElementInfo
                 {
-                    Id = element.Id.GetIntValue(),
+                    Id = element.Id.GetValue(),
                     UniqueId = element.UniqueId,
                     Name = element.Name,
                     FamilyName = element?.get_Parameter(BuiltInParameter.ELEM_FAMILY_PARAM)?.AsValueString(),
@@ -588,7 +669,7 @@ namespace RevitMCPCommandSet.Services
 
                 ViewInfo info = new ViewInfo
                 {
-                    Id = element.Id.GetIntValue(),
+                    Id = element.Id.GetValue(),
                     UniqueId = element.UniqueId,
                     Name = element.Name,
                     FamilyName = element?.get_Parameter(BuiltInParameter.ELEM_FAMILY_PARAM)?.AsValueString(),
@@ -609,7 +690,7 @@ namespace RevitMCPCommandSet.Services
                     Level level = viewPlan.GenLevel;
                     info.AssociatedLevel = new LevelInfo
                     {
-                        Id = level.Id.GetIntValue(),
+                        Id = level.Id.GetValue(),
                         Name = level.Name,
                         Height = level.Elevation * 304.8 // Convert to millimeters.
                     };
@@ -656,7 +737,7 @@ namespace RevitMCPCommandSet.Services
                     return null;
                 AnnotationInfo info = new AnnotationInfo
                 {
-                    Id = element.Id.GetIntValue(),
+                    Id = element.Id.GetValue(),
                     UniqueId = element.UniqueId,
                     Name = element.Name,
                     FamilyName = element?.get_Parameter(BuiltInParameter.ELEM_FAMILY_PARAM)?.AsValueString(),
@@ -733,7 +814,7 @@ namespace RevitMCPCommandSet.Services
                     return null;
                 GroupOrLinkInfo info = new GroupOrLinkInfo
                 {
-                    Id = element.Id.GetIntValue(),
+                    Id = element.Id.GetValue(),
                     UniqueId = element.UniqueId,
                     Name = element.Name,
                     FamilyName = element?.get_Parameter(BuiltInParameter.ELEM_FAMILY_PARAM)?.AsValueString(),
@@ -750,6 +831,7 @@ namespace RevitMCPCommandSet.Services
                     ICollection<ElementId> memberIds = group.GetMemberIds();
                     info.MemberCount = memberIds?.Count;
                     info.GroupType = group.GroupType?.Name;
+                    info.GroupTypeId = group.GroupType?.Id.GetValue();
                 }
                 // Process links.
                 else if (element is RevitLinkInstance linkInstance)
@@ -804,7 +886,7 @@ namespace RevitMCPCommandSet.Services
                     return null;
                 ElementBasicInfo basicInfo = new ElementBasicInfo
                 {
-                    Id = element.Id.GetIntValue(),
+                    Id = element.Id.GetValue(),
                     UniqueId = element.UniqueId,
                     Name = element.Name,
                     FamilyName = element?.get_Parameter(BuiltInParameter.ELEM_FAMILY_PARAM)?.AsValueString(),
@@ -932,7 +1014,7 @@ namespace RevitMCPCommandSet.Services
                 {
                     LevelInfo levelInfo = new LevelInfo
                     {
-                        Id = level.Id.GetIntValue(),
+                        Id = level.Id.GetValue(),
                         Name = level.Name,
                         Height = level.Elevation * 304.8
                     };
@@ -1095,12 +1177,12 @@ namespace RevitMCPCommandSet.Services
     /// <summary>
     /// Stores complete element instance information.
     /// </summary>
-    public class ElementInstanceInfo
+    public class ElementInstanceInfo : RelationshipAwareInfo
     {
         /// <summary>
         /// Id
         /// </summary>
-        public int Id { get; set; }
+        public long Id { get; set; }
         /// <summary>
         /// Id
         /// </summary>
@@ -1108,7 +1190,7 @@ namespace RevitMCPCommandSet.Services
         /// <summary>
         /// Type ID.
         /// </summary>
-        public int TypeId { get; set; }
+        public long TypeId { get; set; }
         /// <summary>
         /// Name.
         /// </summary>
@@ -1128,7 +1210,7 @@ namespace RevitMCPCommandSet.Services
         /// <summary>
         /// Containing room ID.
         /// </summary>
-        public int RoomId { get; set; }
+        public long RoomId { get; set; }
         /// <summary>
         /// Associated level.
         /// </summary>
@@ -1147,12 +1229,12 @@ namespace RevitMCPCommandSet.Services
     /// <summary>
     /// Stores complete element type information.
     /// </summary>
-    public class ElementTypeInfo
+    public class ElementTypeInfo : RelationshipAwareInfo
     {
         /// <summary>
         /// ID
         /// </summary>
-        public int Id { get; set; }
+        public long Id { get; set; }
         /// <summary>
         /// Id
         /// </summary>
@@ -1183,12 +1265,12 @@ namespace RevitMCPCommandSet.Services
     /// <summary>
     /// Stores basic information for datum elements such as levels and grids.
     /// </summary>
-    public class PositioningElementInfo
+    public class PositioningElementInfo : RelationshipAwareInfo
     {
         /// <summary>
         /// Element ID.
         /// </summary>
-        public int Id { get; set; }
+        public long Id { get; set; }
         /// <summary>
         /// Element unique ID.
         /// </summary>
@@ -1233,12 +1315,12 @@ namespace RevitMCPCommandSet.Services
     /// <summary>
     /// Stores basic information for spatial elements such as rooms and areas.
     /// </summary>
-    public class SpatialElementInfo
+    public class SpatialElementInfo : RelationshipAwareInfo
     {
         /// <summary>
         /// Element ID.
         /// </summary>
-        public int Id { get; set; }
+        public long Id { get; set; }
         /// <summary>
         /// Element unique ID.
         /// </summary>
@@ -1292,12 +1374,12 @@ namespace RevitMCPCommandSet.Services
     /// <summary>
     /// Stores basic view element information.
     /// </summary>
-    public class ViewInfo
+    public class ViewInfo : RelationshipAwareInfo
     {
         /// <summary>
         /// Element ID.
         /// </summary>
-        public int Id { get; set; }
+        public long Id { get; set; }
         /// <summary>
         /// Element unique ID.
         /// </summary>
@@ -1366,12 +1448,12 @@ namespace RevitMCPCommandSet.Services
     /// <summary>
     /// Stores basic annotation element information.
     /// </summary>
-    public class AnnotationInfo
+    public class AnnotationInfo : RelationshipAwareInfo
     {
         /// <summary>
         /// Element ID.
         /// </summary>
-        public int Id { get; set; }
+        public long Id { get; set; }
         /// <summary>
         /// Element unique ID.
         /// </summary>
@@ -1421,12 +1503,12 @@ namespace RevitMCPCommandSet.Services
     /// <summary>
     /// Stores basic group and link information.
     /// </summary>
-    public class GroupOrLinkInfo
+    public class GroupOrLinkInfo : RelationshipAwareInfo
     {
         /// <summary>
         /// Element ID.
         /// </summary>
-        public int Id { get; set; }
+        public long Id { get; set; }
         /// <summary>
         /// Element unique ID.
         /// </summary>
@@ -1460,6 +1542,10 @@ namespace RevitMCPCommandSet.Services
         /// </summary>
         public string GroupType { get; set; }
         /// <summary>
+        /// Group type element ID.
+        /// </summary>
+        public long? GroupTypeId { get; set; }
+        /// <summary>
         /// Link status.
         /// </summary>
         public string LinkStatus { get; set; }
@@ -1480,12 +1566,12 @@ namespace RevitMCPCommandSet.Services
     /// <summary>
     /// Stores enhanced basic element information.
     /// </summary>
-    public class ElementBasicInfo
+    public class ElementBasicInfo : RelationshipAwareInfo
     {
         /// <summary>
         /// Element ID.
         /// </summary>
-        public int Id { get; set; }
+        public long Id { get; set; }
         /// <summary>
         /// Element unique ID.
         /// </summary>
@@ -1538,7 +1624,7 @@ namespace RevitMCPCommandSet.Services
     /// </summary>
     public class LevelInfo
     {
-        public int Id { get; set; }
+        public long Id { get; set; }
         public string Name { get; set; }
         public double Height { get; set; }
     }

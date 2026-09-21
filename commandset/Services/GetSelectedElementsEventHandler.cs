@@ -1,5 +1,6 @@
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Common;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 using System;
 using System.Collections.Generic;
@@ -20,6 +21,9 @@ namespace RevitMCPCommandSet.Services
 
         // Limit the number of returned elements
         public int? Limit { get; set; }
+
+        // Include native host and group relationships
+        public bool IncludeRelationships { get; set; }
 
         // IWaitableExternalEventHandler implementation
         public bool WaitForCompletion(int timeoutMilliseconds = 10000)
@@ -46,6 +50,9 @@ namespace RevitMCPCommandSet.Services
                 }
 
                 // Convert to an ElementInfo list
+                var hostedElementIndex = IncludeRelationships
+                    ? ElementRelationshipUtils.BuildHostedElementIndex(doc)
+                    : null;
                 ResultElements = selectedElements.Select(element => new ElementInfo
                 {
 #if REVIT2024_OR_GREATER
@@ -55,7 +62,10 @@ namespace RevitMCPCommandSet.Services
 #endif
                     UniqueId = element.UniqueId,
                     Name = element.Name,
-                    Category = element.Category?.Name
+                    Category = element.Category?.Name,
+                    Relationships = IncludeRelationships
+                        ? ElementRelationshipUtils.GetRelationships(doc, element, false, hostedElementIndex)
+                        : null
                 }).ToList();
             }
             catch (Exception ex)

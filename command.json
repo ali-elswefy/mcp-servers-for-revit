@@ -20,7 +20,7 @@
     },
     {
       "commandName": "get_current_view_elements",
-      "description": "get current view elements",
+      "description": "get current view elements with optional host and group relationships",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
@@ -30,7 +30,12 @@
     },
     {
       "commandName": "get_selected_elements",
-      "description": "get selected elements",
+      "description": "get selected elements with optional host and group relationships",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "set_selected_elements",
+      "description": "set the elements selected in the active Revit document",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
@@ -65,7 +70,7 @@
     },
     {
       "commandName": "ai_element_filter",
-      "description": "AI element filter for querying elements by criteria",
+      "description": "AI element filter for querying elements and native host/group relationships by criteria",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {

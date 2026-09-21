@@ -27,6 +27,11 @@ export function registerGetCurrentViewElementsTool(server: McpServer) {
         .number()
         .optional()
         .describe("Maximum number of elements to return"),
+      includeRelationships: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Include native host and group relationship metadata for each returned element"),
     },
     async (args, extra) => {
       const params = {
@@ -34,6 +39,7 @@ export function registerGetCurrentViewElementsTool(server: McpServer) {
         annotationCategoryList: args.annotationCategoryList || [],
         includeHidden: args.includeHidden || false,
         limit: args.limit || 100,
+        includeRelationships: args.includeRelationships || false,
       };
 
       try {

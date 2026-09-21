@@ -37,11 +37,12 @@ Restart Claude Desktop. When you see the hammer icon, the MCP server is connecte
 | Tool | Description |
 | ---- | ----------- |
 | `get_current_view_info` | Get current active view info |
-| `get_current_view_elements` | Get elements from the current active view |
+| `get_current_view_elements` | Get elements from the current active view, optionally with host/group relationships |
 | `get_available_family_types` | Get available family types in current project |
-| `get_selected_elements` | Get currently selected elements |
+| `get_selected_elements` | Get currently selected elements, optionally with host/group relationships |
+| `set_selected_elements` | Set the currently selected elements by ID |
 | `get_material_quantities` | Calculate material quantities and takeoffs |
-| `ai_element_filter` | Intelligent element querying tool for AI assistants |
+| `ai_element_filter` | Intelligent element querying with host/group relationship filters and optional group expansion |
 | `analyze_model_statistics` | Analyze model complexity with element counts |
 | `create_point_based_element` | Create point-based elements (door, window, furniture) |
 | `create_line_based_element` | Create line-based elements (wall, beam, pipe) |
@@ -62,6 +63,12 @@ Restart Claude Desktop. When you see the hammer icon, the MCP server is connecte
 | `query_stored_data` | Query stored project and room data |
 | `send_code_to_revit` | Send C# code to Revit to execute |
 | `say_hello` | Display a greeting dialog in Revit (connection test) |
+
+### Relationship-Aware Discovery
+
+`ai_element_filter` supports native relationship queries using `filterHostElementId` for hosted family instances and `filterGroupId` for direct group members. Set `includeRelationships` to return host/group references and group member IDs. Set `expandGroups` to add direct and nested group members to the result set.
+
+`get_current_view_elements` and `get_selected_elements` accept `includeRelationships: true` for the same host/group metadata.
 
 ## Development
 

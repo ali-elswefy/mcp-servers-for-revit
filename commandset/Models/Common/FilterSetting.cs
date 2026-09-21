@@ -30,7 +30,19 @@ namespace RevitMCPCommandSet.Models.Common
         /// This filter applies only to element instances, not element types.
         /// </summary>
         [JsonProperty("filterFamilySymbolId")]
-        public int FilterFamilySymbolId { get; set; } = -1;
+        public long FilterFamilySymbolId { get; set; } = -1;
+        /// <summary>
+        /// Gets or sets the host element ID. When specified, only hosted instances
+        /// whose native FamilyInstance.Host matches this ID are returned.
+        /// </summary>
+        [JsonProperty("filterHostElementId")]
+        public long? FilterHostElementId { get; set; }
+        /// <summary>
+        /// Gets or sets the group instance ID. When specified, only direct members
+        /// of this group instance are returned.
+        /// </summary>
+        [JsonProperty("filterGroupId")]
+        public long? FilterGroupId { get; set; }
         /// <summary>
         /// Gets or sets whether to include element types, such as wall types and door types.
         /// </summary>
@@ -47,6 +59,17 @@ namespace RevitMCPCommandSet.Models.Common
         /// </summary>
         [JsonProperty("filterVisibleInCurrentView")]
         public bool FilterVisibleInCurrentView { get; set; }
+        /// <summary>
+        /// Gets or sets whether relationship metadata should be included in results.
+        /// </summary>
+        [JsonProperty("includeRelationships")]
+        public bool IncludeRelationships { get; set; }
+        /// <summary>
+        /// Gets or sets whether group members should be added to the result set.
+        /// This also includes direct member references on returned group records.
+        /// </summary>
+        [JsonProperty("expandGroups")]
+        public bool ExpandGroups { get; set; }
         /// <summary>
         /// Gets or sets the minimum point of the spatial filter, in millimeters.
         /// When this value and BoundingBoxMax are set, elements intersecting the bounding box are returned.
@@ -82,9 +105,13 @@ namespace RevitMCPCommandSet.Models.Common
             // Ensure that at least one filter criterion is specified
             if (string.IsNullOrWhiteSpace(FilterCategory) &&
                 string.IsNullOrWhiteSpace(FilterElementType) &&
-                FilterFamilySymbolId <= 0)
+                FilterFamilySymbolId <= 0 &&
+                !FilterHostElementId.HasValue &&
+                !FilterGroupId.HasValue &&
+                !FilterVisibleInCurrentView &&
+                (BoundingBoxMin == null || BoundingBoxMax == null))
             {
-                errorMessage = "Invalid filter settings: specify at least one filter criterion (category, element type, or family type).";
+                errorMessage = "Invalid filter settings: specify at least one filter criterion (category, element type, family type, host element, group, visibility, or bounding box).";
                 return false;
             }
 
@@ -96,11 +123,27 @@ namespace RevitMCPCommandSet.Models.Common
                     invalidFilters.Add("family instance filter");
                 if (FilterVisibleInCurrentView)
                     invalidFilters.Add("view visibility filter");
+                if (FilterHostElementId.HasValue)
+                    invalidFilters.Add("host element filter");
+                if (FilterGroupId.HasValue)
+                    invalidFilters.Add("group filter");
                 if (invalidFilters.Count > 0)
                 {
                     errorMessage = $"The following filters do not apply when filtering only element types: {string.Join(", ", invalidFilters)}";
                     return false;
                 }
+            }
+
+            if (FilterHostElementId.HasValue && FilterHostElementId.Value <= 0)
+            {
+                errorMessage = "Invalid host element filter: the element ID must be positive.";
+                return false;
+            }
+
+            if (FilterGroupId.HasValue && FilterGroupId.Value <= 0)
+            {
+                errorMessage = "Invalid group filter: the group ID must be positive.";
+                return false;
             }
             // Validate the spatial filter
             if (BoundingBoxMin != null && BoundingBoxMax != null)

@@ -114,11 +114,12 @@ If using a release ZIP, the command set is pre-installed inside the plugin. For 
 | Tool | Description |
 | ---- | ----------- |
 | `get_current_view_info` | Get current active view info |
-| `get_current_view_elements` | Get elements from the current active view |
+| `get_current_view_elements` | Get elements from the current active view, optionally with host/group relationships |
 | `get_available_family_types` | Get available family types in current project |
-| `get_selected_elements` | Get currently selected elements |
+| `get_selected_elements` | Get currently selected elements, optionally with host/group relationships |
+| `set_selected_elements` | Set the currently selected elements by ID |
 | `get_material_quantities` | Calculate material quantities and takeoffs |
-| `ai_element_filter` | Intelligent element querying tool for AI assistants |
+| `ai_element_filter` | Intelligent element querying with host/group relationship filters and optional group expansion |
 | `analyze_model_statistics` | Analyze model complexity with element counts |
 | `create_point_based_element` | Create point-based elements (door, window, furniture) |
 | `create_line_based_element` | Create line-based elements (wall, beam, pipe) |
@@ -139,6 +140,30 @@ If using a release ZIP, the command set is pre-installed inside the plugin. For 
 | `query_stored_data` | Query stored project and room data |
 | `send_code_to_revit` | Send C# code to Revit to execute |
 | `say_hello` | Display a greeting dialog in Revit (connection test) |
+
+### Relationship-Aware Discovery
+
+`ai_element_filter` supports native relationship queries using `filterHostElementId` for hosted family instances and `filterGroupId` for direct group members. Set `includeRelationships` to return `Host`, `Group`, `HostedElementIds`, `HostedElements`, and `GroupMemberIds` references. Set `expandGroups` to include direct and nested group members in the result set and return direct member summaries.
+
+`get_current_view_elements` and `get_selected_elements` accept `includeRelationships: true` to return the same host/group metadata for their results.
+
+```json
+{
+  "filterCategory": "OST_Doors",
+  "includeInstances": true,
+  "includeRelationships": true
+}
+```
+
+Use a group ID to discover its direct members:
+
+```json
+{
+  "filterGroupId": 123456,
+  "includeInstances": true,
+  "includeRelationships": true
+}
+```
 
 ## Testing
 

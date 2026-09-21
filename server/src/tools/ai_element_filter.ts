@@ -5,7 +5,7 @@ import { withRevitConnection } from "../utils/ConnectionManager.js";
 export function registerAIElementFilterTool(server: McpServer) {
   server.tool(
     "ai_element_filter",
-    "An intelligent Revit element querying tool designed specifically for AI assistants to retrieve detailed element information from Revit projects. This tool allows the AI to request elements matching specific criteria (such as category, type, visibility, or spatial location) and then perform further analysis on the returned data to answer complex user queries about Revit model elements. Example: When a user asks 'Find all walls taller than 5m in the project', the AI would: 1) Call this tool with parameters: {\"filterCategory\": \"OST_Walls\", \"includeInstances\": true}, 2) Receive detailed information about all wall instances in the project, 3) Process the returned data to filter walls with height > 5000mm, 4) Present the filtered results to the user with relevant details.",
+    "An intelligent Revit element querying tool designed specifically for AI assistants to retrieve detailed element information from Revit projects. Filter by category, type, family symbol, visibility, spatial location, host element, or containing group. Set includeRelationships to return native host/group references; set expandGroups to add group members to the result set and include member references. Example: {\"filterCategory\": \"OST_Doors\", \"includeRelationships\": true} finds doors and reports their hosts and groups.",
     {
       data: z.object({
         filterCategory: z
@@ -20,6 +20,18 @@ export function registerAIElementFilterTool(server: McpServer) {
           .number()
           .optional()
           .describe("The ElementId of a specific FamilySymbol (type) in Revit used for filtering elements by their type (e.g., '123456', '789012'). Gets or sets the ElementId of the FamilySymbol to be used as a filter criterion. Use '-1' if no specific FamilySymbol filtering is needed."),
+        filterHostElementId: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Return only hosted family instances whose native host has this Revit element ID."),
+        filterGroupId: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Return only direct members of the group instance with this Revit element ID."),
         includeTypes: z
           .boolean()
           .default(false)
@@ -32,33 +44,29 @@ export function registerAIElementFilterTool(server: McpServer) {
           .boolean()
           .optional()
           .describe("Determines whether to only return elements that are visible in the current view. When set to true, only elements visible in the current view will be returned. Note: This filter only applies to element instances, not type elements."),
+        includeRelationships: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("Include native host and group relationship metadata on each result. Group results include direct member IDs."),
+        expandGroups: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("When a returned result is a group, add its direct and nested members to the result set and include member references."),
         boundingBoxMin: z
           .object({
-            p0: z.object({
-              x: z.number().describe("X coordinate of start point"),
-              y: z.number().describe("Y coordinate of start point"),
-              z: z.number().describe("Z coordinate of start point"),
-            }),
-            p1: z.object({
-              x: z.number().describe("X coordinate of end point"),
-              y: z.number().describe("Y coordinate of end point"),
-              z: z.number().describe("Z coordinate of end point"),
-            }),
+            x: z.number().describe("X coordinate in mm"),
+            y: z.number().describe("Y coordinate in mm"),
+            z: z.number().describe("Z coordinate in mm"),
           })
           .optional()
           .describe("The minimum point coordinates (in mm) for spatial bounding box filtering. When set along with boundingBoxMax, only elements that intersect with this bounding box will be returned. Set to null to disable this filter."),
         boundingBoxMax: z
           .object({
-            p0: z.object({
-              x: z.number().describe("X coordinate of start point"),
-              y: z.number().describe("Y coordinate of start point"),
-              z: z.number().describe("Z coordinate of start point"),
-            }),
-            p1: z.object({
-              x: z.number().describe("X coordinate of end point"),
-              y: z.number().describe("Y coordinate of end point"),
-              z: z.number().describe("Z coordinate of end point"),
-            }),
+            x: z.number().describe("X coordinate in mm"),
+            y: z.number().describe("Y coordinate in mm"),
+            z: z.number().describe("Z coordinate in mm"),
           })
           .optional()
           .describe("The maximum point coordinates (in mm) for spatial bounding box filtering. When set along with boundingBoxMin, only elements that intersect with this bounding box will be returned. Set to null to disable this filter."),

@@ -34,6 +34,7 @@ namespace RevitMCPCommandSet.Commands.Access
 
                     // Set the result limit
                     _handler.Limit = limit;
+                    _handler.IncludeRelationships = parameters?["includeRelationships"]?.Value<bool>() ?? false;
 
                     // Raise the external event and wait for completion
                     if (RaiseAndWaitForCompletion(15000))

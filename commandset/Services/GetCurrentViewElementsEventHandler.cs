@@ -1,5 +1,6 @@
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Common;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services
@@ -20,7 +21,8 @@ namespace RevitMCPCommandSet.Services
             "OST_StructuralFraming",
             "OST_Ceilings",
             "OST_MEPSpaces",
-            "OST_Rooms"
+            "OST_Rooms",
+            "OST_IOSModelGroups"
         };
         // Default annotation category list
         private readonly List<string> _defaultAnnotationCategories = new List<string>
@@ -43,6 +45,7 @@ namespace RevitMCPCommandSet.Services
         private List<string> _annotationCategoryList;
         private bool _includeHidden;
         private int _limit;
+        private bool _includeRelationships;
 
         // Execution result
         public ViewElementsResult ResultInfo { get; private set; }
@@ -52,12 +55,18 @@ namespace RevitMCPCommandSet.Services
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
 
         // Set query parameters
-        public void SetQueryParameters(List<string> modelCategoryList, List<string> annotationCategoryList, bool includeHidden, int limit)
+        public void SetQueryParameters(
+            List<string> modelCategoryList,
+            List<string> annotationCategoryList,
+            bool includeHidden,
+            int limit,
+            bool includeRelationships = false)
         {
             _modelCategoryList = modelCategoryList;
             _annotationCategoryList = annotationCategoryList;
             _includeHidden = includeHidden;
             _limit = limit;
+            _includeRelationships = includeRelationships;
             TaskCompleted = false;
             _resetEvent.Reset();
         }
@@ -134,6 +143,9 @@ namespace RevitMCPCommandSet.Services
                 }
 
                 // Build the result
+                var hostedElementIndex = _includeRelationships
+                    ? ElementRelationshipUtils.BuildHostedElementIndex(doc)
+                    : null;
                 var elementInfos = elements.Select(e => new ElementInfo
                 {
 #if REVIT2024_OR_GREATER
@@ -144,7 +156,10 @@ namespace RevitMCPCommandSet.Services
                     UniqueId = e.UniqueId,
                     Name = e.Name,
                     Category = e.Category?.Name ?? "unknow",
-                    Properties = GetElementProperties(e)
+                    Properties = GetElementProperties(e),
+                    Relationships = _includeRelationships
+                        ? ElementRelationshipUtils.GetRelationships(doc, e, false, hostedElementIndex)
+                        : null
                 }).ToList();
 
                 ResultInfo = new ViewElementsResult

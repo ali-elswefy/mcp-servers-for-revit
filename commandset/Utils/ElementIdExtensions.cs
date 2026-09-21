@@ -27,5 +27,20 @@ namespace RevitMCPCommandSet.Utils
 #else
         public static int GetIntValue(this ElementId id) => id.IntegerValue;
 #endif
+
+        /// <summary>
+        /// Creates an ElementId from a serialized numeric ID across Revit versions.
+        /// </summary>
+        public static ElementId Create(long value)
+        {
+#if REVIT2024_OR_GREATER
+            return new ElementId(value);
+#else
+            if (value < int.MinValue || value > int.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(value), "The element ID is outside the range supported by this Revit version.");
+
+            return new ElementId((int)value);
+#endif
+        }
     }
 }

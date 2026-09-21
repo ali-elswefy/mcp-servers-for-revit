@@ -1,4 +1,6 @@
-﻿namespace RevitMCPCommandSet.Models.Common
+﻿using Newtonsoft.Json;
+
+namespace RevitMCPCommandSet.Models.Common
 {
     public class ElementInfo
     {
@@ -7,5 +9,7 @@
         public string Name { get; set; }
         public string Category { get; set; }
         public Dictionary<string, string> Properties { get; set; } = new Dictionary<string, string>();
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public ElementRelationshipInfo Relationships { get; set; }
     }
 }
