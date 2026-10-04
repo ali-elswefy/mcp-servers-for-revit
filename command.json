@@ -20,7 +20,7 @@
     },
     {
       "commandName": "get_current_view_elements",
-      "description": "get current view elements with optional host and group relationships",
+      "description": "get current view elements with optional host and group relationships; omitted category lists use defaults, explicit lists are validated",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "commandName": "analyze_model_statistics",
-      "description": "Analyze model complexity with element counts by category, type, family, and level",
+      "description": "Analyze model complexity with element counts by category, type, family, and level, or count only the categories listed in categories",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {
@@ -120,7 +120,7 @@
     },
     {
       "commandName": "send_code_to_revit",
-      "description": "Execute dynamic C# code in Revit with access to the Document and Revit API",
+      "description": "Execute dynamic C# code in Revit with access to the Document and Revit API; timeouts report cancelled_before_start or outcome_unknown",
       "assemblyPath": "RevitMCPCommandSet.dll"
     },
     {

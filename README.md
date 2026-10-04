@@ -120,7 +120,7 @@ If using a release ZIP, the command set is pre-installed inside the plugin. For 
 | `set_selected_elements` | Set the currently selected elements by ID |
 | `get_material_quantities` | Calculate material quantities and takeoffs |
 | `ai_element_filter` | Intelligent element querying with host/group relationship filters and optional group expansion |
-| `analyze_model_statistics` | Analyze model complexity with element counts |
+| `analyze_model_statistics` | Analyze model complexity with element counts, or count only specific categories (`categories`) |
 | `create_point_based_element` | Create point-based elements (door, window, furniture) |
 | `create_line_based_element` | Create line-based elements (wall, beam, pipe) |
 | `create_surface_based_element` | Create surface-based elements (floor, ceiling, roof) |
@@ -140,6 +140,7 @@ If using a release ZIP, the command set is pre-installed inside the plugin. For 
 | `query_stored_data` | Query stored project and room data |
 | `send_code_to_revit` | Send C# code to Revit to execute |
 | `say_hello` | Display a greeting dialog in Revit (connection test) |
+| `health_check` | Report add-in reachability and Revit UI-thread responsiveness separately, without querying the model |
 
 ### Relationship-Aware Discovery
 

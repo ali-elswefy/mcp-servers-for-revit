@@ -1,21 +1,16 @@
-﻿using Autodesk.Revit.UI;
+using Autodesk.Revit.UI;
 using Newtonsoft.Json.Linq;
+using RevitMCPCommandSet.Models.Common;
 using RevitMCPCommandSet.Services;
-using RevitMCPSDK.API.Base;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
+using RevitMCPCommandSet.Utils.ExternalEvents;
 
 namespace RevitMCPCommandSet.Commands.Access
 {
-    public class GetCurrentViewInfoCommand : ExternalEventCommandBase
+    public class GetCurrentViewInfoCommand : QueuedExternalEventCommandBase<string, CurrentViewInfo>
     {
-        private GetCurrentViewInfoEventHandler _handler => (GetCurrentViewInfoEventHandler)Handler;
-
         public override string CommandName => "get_current_view_info";
+
+        protected override bool MayModifyModel => false;
 
         public GetCurrentViewInfoCommand(UIApplication uiApp)
             : base(new GetCurrentViewInfoEventHandler(), uiApp)
@@ -24,15 +19,8 @@ namespace RevitMCPCommandSet.Commands.Access
 
         public override object Execute(JObject parameters, string requestId)
         {
-            // Raise the external event and wait for completion
-            if (RaiseAndWaitForCompletion(10000)) // 10-second timeout
-            {
-                return _handler.ResultInfo;
-            }
-            else
-            {
-                throw new TimeoutException("Retrieving the current view information timed out.");
-            }
+            int timeoutMs = CommandTimeouts.Resolve(CommandName, requestId, CommandTimeouts.CurrentViewInfoDefaultMs, parameters);
+            return RunOnRevitThread(requestId, requestId, timeoutMs);
         }
     }
 }

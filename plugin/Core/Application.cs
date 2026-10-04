@@ -37,6 +37,11 @@ namespace revit_mcp_plugin.Core
             ConfigurationManager configManager = new ConfigurationManager(_logger);
             configManager.LoadConfiguration();
 
+            _logger.Info("Revit MCP plugin loaded (Revit {0}, plugin {1}, autoStart={2}).",
+                application.ControlledApplication.VersionNumber,
+                Assembly.GetExecutingAssembly().GetName().Version,
+                configManager.Config.Settings.AutoStart);
+
             if (configManager.Config.Settings.AutoStart)
             {
                 _controlledApplication = application;
@@ -81,6 +86,8 @@ namespace revit_mcp_plugin.Core
         {
             try
             {
+                _logger?.Info("Revit MCP plugin shutting down.");
+
                 if (_controlledApplication != null)
                 {
                     _controlledApplication.Idling -= StartServerOnIdle;

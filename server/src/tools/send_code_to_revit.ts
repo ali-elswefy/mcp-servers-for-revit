@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
+import { revitErrorResult } from "../utils/errors.js";
 
 const transactionModeSchema = z
   .enum(["auto", "none"])
@@ -12,7 +13,9 @@ const transactionModeSchema = z
 export function registerSendCodeToRevitTool(server: McpServer) {
   server.tool(
     "send_code_to_revit",
-    "Send C# code to Revit for execution. The code will be inserted into a template with access to the Revit Document and parameters. Your code should be written to work within the Execute method of the template.",
+    "Send C# code to Revit for execution. The code will be inserted into a template with access to the Revit Document and parameters. Your code should be written to work within the Execute method of the template. " +
+      "If the call fails with error kind 'timeout' and outcome 'outcome_unknown', the code was already running and may still change the model: inspect the model before doing anything else and never resend the same code automatically. " +
+      "Outcome 'cancelled_before_start' means the code never ran.",
     {
       code: z
         .string()
@@ -35,9 +38,26 @@ export function registerSendCodeToRevitTool(server: McpServer) {
       };
 
       try {
+        // Sent exactly once: a timed-out mutation must never be replayed by the client.
         const response = await withRevitConnection(async (revitClient) => {
           return await revitClient.sendCommand("send_code_to_revit", params);
         });
+
+        if (response && response.success === false) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: `Code execution failed (${response.errorType ?? "error"}).\nResult: ${JSON.stringify(
+                  response,
+                  null,
+                  2
+                )}`,
+              },
+            ],
+          };
+        }
 
         return {
           content: [
@@ -52,16 +72,7 @@ export function registerSendCodeToRevitTool(server: McpServer) {
           ],
         };
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Code execution failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            },
-          ],
-        };
+        return revitErrorResult("send_code_to_revit", error);
       }
     }
   );

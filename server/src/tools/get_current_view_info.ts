@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
+import { revitErrorResult } from "../utils/errors.js";
 
 export function registerGetCurrentViewInfoTool(server: McpServer) {
   server.tool(
@@ -21,16 +22,7 @@ export function registerGetCurrentViewInfoTool(server: McpServer) {
           ],
         };
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `get current view info failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            },
-          ],
-        };
+        return revitErrorResult("get_current_view_info", error);
       }
     }
   );
