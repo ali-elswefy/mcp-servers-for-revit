@@ -1,14 +1,24 @@
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Common;
 using RevitMCPCommandSet.Utils;
-using RevitMCPSDK.API.Interfaces;
+using RevitMCPCommandSet.Utils.ExternalEvents;
 
 namespace RevitMCPCommandSet.Services
 {
-    public class GetCurrentViewElementsEventHandler : IExternalEventHandler, IWaitableExternalEventHandler
+    /// <summary>
+    /// Category selection:
+    /// - Both lists omitted: the default model and annotation categories below.
+    /// - Any list provided: only the provided lists are used; an omitted list contributes nothing.
+    /// - Every provided list empty: no category filter (all element categories in the view).
+    /// Unknown category names are a validation error rather than being silently dropped.
+    /// Title blocks are not in the defaults; request OST_TitleBlocks explicitly on sheet views.
+    /// </summary>
+    public class GetCurrentViewElementsEventHandler : QueuedExternalEventHandler<ViewElementsRequest, ViewElementsResult>
     {
+        private const string CommandName = "get_current_view_elements";
+
         // Default model category list
-        private readonly List<string> _defaultModelCategories = new List<string>
+        public static readonly IReadOnlyList<string> DefaultModelCategories = new List<string>
         {
             "OST_Walls",
             "OST_Doors",
@@ -25,7 +35,7 @@ namespace RevitMCPCommandSet.Services
             "OST_IOSModelGroups"
         };
         // Default annotation category list
-        private readonly List<string> _defaultAnnotationCategories = new List<string>
+        public static readonly IReadOnlyList<string> DefaultAnnotationCategories = new List<string>
         {
             "OST_Dimensions",
             "OST_TextNotes",
@@ -36,154 +46,103 @@ namespace RevitMCPCommandSet.Services
             "OST_RoomTags",
             "OST_AreaTags",
             "OST_SpaceTags",
-            "OST_ViewportLabels",
-            "OST_TitleBlocks"
+            "OST_ViewportLabels"
         };
 
-        // Query parameters
-        private List<string> _modelCategoryList;
-        private List<string> _annotationCategoryList;
-        private bool _includeHidden;
-        private int _limit;
-        private bool _includeRelationships;
-
-        // Execution result
-        public ViewElementsResult ResultInfo { get; private set; }
-
-        // State synchronization object
-        public bool TaskCompleted { get; private set; }
-        private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
-
-        // Set query parameters
-        public void SetQueryParameters(
-            List<string> modelCategoryList,
-            List<string> annotationCategoryList,
-            bool includeHidden,
-            int limit,
-            bool includeRelationships = false)
+        protected override ViewElementsResult Handle(UIApplication app, ViewElementsRequest request)
         {
-            _modelCategoryList = modelCategoryList;
-            _annotationCategoryList = annotationCategoryList;
-            _includeHidden = includeHidden;
-            _limit = limit;
-            _includeRelationships = includeRelationships;
-            TaskCompleted = false;
-            _resetEvent.Reset();
+            var doc = app.ActiveUIDocument?.Document;
+            if (doc == null)
+                throw CommandErrors.NoActiveDocument(CommandName, request.RequestId);
+
+            var activeView = doc.ActiveView;
+            if (activeView == null)
+                throw CommandErrors.NoActiveView(CommandName, request.RequestId);
+
+            List<ResolvedCategory> categories = ResolveCategories(doc, request);
+
+            // Filter by category inside the collector so unrelated elements are never materialized.
+            var collector = new FilteredElementCollector(doc, activeView.Id)
+                .WhereElementIsNotElementType();
+            if (categories.Count > 0)
+            {
+                collector.WherePasses(new ElementMulticategoryFilter(categories.Select(c => c.Category.Id).ToList()));
+            }
+
+            IEnumerable<Element> matches = collector;
+            if (!request.IncludeHidden)
+            {
+                matches = matches.Where(e => !e.IsHidden(activeView));
+            }
+
+            // Stop enumerating once the limit is reached (plus one element to detect truncation),
+            // before any property or relationship extraction.
+            List<Element> elements = request.Limit > 0
+                ? matches.Take(request.Limit + 1).ToList()
+                : matches.ToList();
+            bool truncated = request.Limit > 0 && elements.Count > request.Limit;
+            if (truncated)
+            {
+                elements.RemoveAt(elements.Count - 1);
+            }
+
+            // Build the result
+            var hostedElementIndex = request.IncludeRelationships
+                ? ElementRelationshipUtils.BuildHostedElementIndex(doc)
+                : null;
+            var elementInfos = elements.Select(e => new ElementInfo
+            {
+#if REVIT2024_OR_GREATER
+                Id = e.Id.Value,
+#else
+                Id = e.Id.IntegerValue,
+#endif
+                UniqueId = e.UniqueId,
+                Name = e.Name,
+                Category = e.Category?.Name ?? "unknow",
+                Properties = GetElementProperties(e),
+                Relationships = request.IncludeRelationships
+                    ? ElementRelationshipUtils.GetRelationships(doc, e, false, hostedElementIndex)
+                    : null
+            }).ToList();
+
+            return new ViewElementsResult
+            {
+#if REVIT2024_OR_GREATER
+                ViewId = activeView.Id.Value,
+#else
+                ViewId = activeView.Id.IntegerValue,
+#endif
+                ViewName = activeView.Name,
+                TotalElementsInView = new FilteredElementCollector(doc, activeView.Id).GetElementCount(),
+                FilteredElementCount = elementInfos.Count,
+                Truncated = truncated,
+                CategoryFilter = categories.Count > 0
+                    ? categories.Select(c => c.BuiltInCategoryName ?? c.Category.Name).ToList()
+                    : null,
+                Elements = elementInfos
+            };
         }
 
-        // IWaitableExternalEventHandler implementation
-        public bool WaitForCompletion(int timeoutMilliseconds = 10000)
+        private static List<ResolvedCategory> ResolveCategories(Document doc, ViewElementsRequest request)
         {
-            _resetEvent.Reset();
-            return _resetEvent.WaitOne(timeoutMilliseconds);
-        }
-
-        public void Execute(UIApplication app)
-        {
-            try
+            if (request.ModelCategoryList == null && request.AnnotationCategoryList == null)
             {
-                var uiDoc = app.ActiveUIDocument;
-                var doc = uiDoc.Document;
-                var activeView = doc.ActiveView;
-
-
-                // Combine all categories
-                List<string> allCategories = new List<string>();
-                if (_modelCategoryList == null && _annotationCategoryList == null)
-                {
-                    allCategories.AddRange(_defaultModelCategories);
-                    allCategories.AddRange(_defaultAnnotationCategories);
-                }
-                else
-                {
-                    allCategories.AddRange(_modelCategoryList ?? new List<string>());
-                    allCategories.AddRange(_annotationCategoryList ?? new List<string>());
-                }
-
-                // Get all elements in the current view
-                var collector = new FilteredElementCollector(doc, activeView.Id)
-                    .WhereElementIsNotElementType();
-
-                // Materialize all elements
-                IList<Element> elements = collector.ToElements();
-
-                // Filter by category
-                if (allCategories.Count > 0)
-                {
-                    // Convert category names to enum values
-                    List<BuiltInCategory> builtInCategories = new List<BuiltInCategory>();
-                    foreach (string categoryName in allCategories)
-                    {
-                        if (Enum.TryParse(categoryName, out BuiltInCategory category))
-                        {
-                            builtInCategories.Add(category);
-                        }
-                    }
-                    // Use a category filter if any categories were parsed successfully
-                    if (builtInCategories.Count > 0)
-                    {
-                        ElementMulticategoryFilter categoryFilter = new ElementMulticategoryFilter(builtInCategories);
-                        elements = new FilteredElementCollector(doc, activeView.Id)
-                            .WhereElementIsNotElementType()
-                            .WherePasses(categoryFilter)
-                            .ToElements();
-                    }
-                }
-
-                // Filter out hidden elements
-                if (!_includeHidden)
-                {
-                    elements = elements.Where(e => !e.IsHidden(activeView)).ToList();
-                }
-
-                // Limit the number of results
-                if (_limit > 0 && elements.Count > _limit)
-                {
-                    elements = elements.Take(_limit).ToList();
-                }
-
-                // Build the result
-                var hostedElementIndex = _includeRelationships
-                    ? ElementRelationshipUtils.BuildHostedElementIndex(doc)
-                    : null;
-                var elementInfos = elements.Select(e => new ElementInfo
-                {
-#if REVIT2024_OR_GREATER
-                    Id = e.Id.Value,
-#else
-                    Id = e.Id.IntegerValue,
-#endif
-                    UniqueId = e.UniqueId,
-                    Name = e.Name,
-                    Category = e.Category?.Name ?? "unknow",
-                    Properties = GetElementProperties(e),
-                    Relationships = _includeRelationships
-                        ? ElementRelationshipUtils.GetRelationships(doc, e, false, hostedElementIndex)
-                        : null
-                }).ToList();
-
-                ResultInfo = new ViewElementsResult
-                {
-#if REVIT2024_OR_GREATER
-                    ViewId = activeView.Id.Value,
-#else
-                    ViewId = activeView.Id.IntegerValue,
-#endif
-                    ViewName = activeView.Name,
-                    TotalElementsInView = new FilteredElementCollector(doc, activeView.Id).GetElementCount(),
-                    FilteredElementCount = elementInfos.Count,
-                    Elements = elementInfos
-                };
+                // Defaults are not user input: skip any category this Revit version or document lacks.
+                return CategoryResolver.Resolve(doc, DefaultModelCategories.Concat(DefaultAnnotationCategories), out _);
             }
-            catch (Exception ex)
+
+            var requested = (request.ModelCategoryList ?? new List<string>())
+                .Concat(request.AnnotationCategoryList ?? new List<string>())
+                .ToList();
+            var resolved = CategoryResolver.Resolve(doc, requested, out var invalidNames);
+            if (invalidNames.Count > 0)
             {
-                TaskDialog.Show("error", ex.Message);
+                throw CommandErrors.Validation(
+                    $"Unknown category name(s): {string.Join(", ", invalidNames)}. Use BuiltInCategory names such as 'OST_Walls' or display names such as 'Walls'.",
+                    CommandName, request.RequestId, new { invalidCategories = invalidNames });
             }
-            finally
-            {
-                TaskCompleted = true;
-                _resetEvent.Set();
-            }
+            return resolved;
         }
 
         private Dictionary<string, string> GetElementProperties(Element element)
@@ -239,7 +198,8 @@ namespace RevitMCPCommandSet.Services
             return properties;
         }
 
-        public string GetName()
+
+        public override string GetName()
         {
             return "Get Current View Elements";
         }

@@ -1,16 +1,20 @@
-﻿using Autodesk.Revit.UI;
+using Autodesk.Revit.UI;
 using Newtonsoft.Json.Linq;
-using RevitMCPSDK.API.Base;
+using RevitMCPCommandSet.Utils.ExternalEvents;
 
 namespace RevitMCPCommandSet.Commands.ExecuteDynamicCode
 {
     /// <summary>
-    /// Command that handles code execution
+    /// Command that handles code execution.
+    ///
+    /// Outcomes:
+    /// - JSON-RPC success with success=true: the code ran (and the automatic transaction committed).
+    /// - JSON-RPC success with success=false and errorType compilation/runtime/transaction: nothing was committed.
+    /// - JSON-RPC error with data.kind="timeout": see data.outcome. "cancelled_before_start" never ran;
+    ///   "outcome_unknown" may still commit, so the caller must inspect the model and must not replay it.
     /// </summary>
-    public class ExecuteCodeCommand : ExternalEventCommandBase
+    public class ExecuteCodeCommand : QueuedExternalEventCommandBase<CodeExecutionRequest, ExecutionResultInfo>
     {
-        private ExecuteCodeEventHandler _handler => (ExecuteCodeEventHandler)Handler;
-
         public override string CommandName => "send_code_to_revit";
 
         public ExecuteCodeCommand(UIApplication uiApp)
@@ -20,37 +24,33 @@ namespace RevitMCPCommandSet.Commands.ExecuteDynamicCode
 
         public override object Execute(JObject parameters, string requestId)
         {
-            try
+            string code = parameters?["code"]?.Value<string>();
+            if (string.IsNullOrWhiteSpace(code))
+                throw CommandErrors.Validation("Missing required parameter: 'code'", CommandName, requestId);
+
+            JArray parametersArray = parameters["parameters"] as JArray;
+            object[] executionParameters = parametersArray?.ToObject<object[]>() ?? Array.Empty<object>();
+
+            string transactionMode = parameters["transactionMode"]?.Value<string>() ?? ExecuteCodeEventHandler.TransactionModeAuto;
+            transactionMode = transactionMode.Trim().ToLowerInvariant();
+            if (transactionMode != ExecuteCodeEventHandler.TransactionModeAuto &&
+                transactionMode != ExecuteCodeEventHandler.TransactionModeNone)
             {
-                // Validate parameters
-                if (!parameters.ContainsKey("code"))
-                {
-                    throw new ArgumentException("Missing required parameter: 'code'");
-                }
-
-                // Parse the code and parameters
-                string code = parameters["code"].Value<string>();
-                JArray parametersArray = parameters["parameters"] as JArray;
-                object[] executionParameters = parametersArray?.ToObject<object[]>() ?? Array.Empty<object>();
-                string transactionMode = parameters["transactionMode"]?.Value<string>() ?? ExecuteCodeEventHandler.TransactionModeAuto;
-
-                // Set execution parameters
-                _handler.SetExecutionParameters(code, executionParameters, transactionMode);
-
-                // Raise the external event and wait for completion
-                if (RaiseAndWaitForCompletion(60000)) // 1-minute timeout
-                {
-                    return _handler.ResultInfo;
-                }
-                else
-                {
-                    throw new TimeoutException("Code execution timed out.");
-                }
+                throw CommandErrors.Validation(
+                    $"Invalid transactionMode '{transactionMode}'. Use 'auto' or 'none'.", CommandName, requestId);
             }
-            catch (Exception ex)
+
+            int timeoutMs = CommandTimeouts.Resolve(CommandName, requestId, CommandTimeouts.ExecuteCodeDefaultMs, parameters);
+
+            var request = new CodeExecutionRequest
             {
-                throw new Exception($"Failed to execute code: {ex.Message}", ex);
-            }
+                RequestId = requestId,
+                Code = code,
+                Parameters = executionParameters,
+                TransactionMode = transactionMode
+            };
+
+            return RunOnRevitThread(request, requestId, timeoutMs);
         }
     }
 }

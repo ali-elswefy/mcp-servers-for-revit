@@ -1,15 +1,16 @@
-﻿using Autodesk.Revit.UI;
+using Autodesk.Revit.UI;
 using Newtonsoft.Json.Linq;
+using RevitMCPCommandSet.Models.Common;
 using RevitMCPCommandSet.Services;
-using RevitMCPSDK.API.Base;
+using RevitMCPCommandSet.Utils.ExternalEvents;
 
 namespace RevitMCPCommandSet.Commands.Access
 {
-    public class GetCurrentViewElementsCommand : ExternalEventCommandBase
+    public class GetCurrentViewElementsCommand : QueuedExternalEventCommandBase<ViewElementsRequest, ViewElementsResult>
     {
-        private GetCurrentViewElementsEventHandler _handler => (GetCurrentViewElementsEventHandler)Handler;
-
         public override string CommandName => "get_current_view_elements";
+
+        protected override bool MayModifyModel => false;
 
         public GetCurrentViewElementsCommand(UIApplication uiApp)
             : base(new GetCurrentViewElementsEventHandler(), uiApp)
@@ -18,37 +19,31 @@ namespace RevitMCPCommandSet.Commands.Access
 
         public override object Execute(JObject parameters, string requestId)
         {
-            try
+            var request = new ViewElementsRequest
             {
-                // Parse parameters
-                List<string> modelCategoryList = parameters?["modelCategoryList"]?.ToObject<List<string>>() ?? new List<string>();
-                List<string> annotationCategoryList = parameters?["annotationCategoryList"]?.ToObject<List<string>>() ?? new List<string>();
-                bool includeHidden = parameters?["includeHidden"]?.Value<bool>() ?? false;
-                int limit = parameters?["limit"]?.Value<int>() ?? 100;
-                bool includeRelationships = parameters?["includeRelationships"]?.Value<bool>() ?? false;
+                RequestId = requestId,
+                // Keep null (omitted) distinct from [] (explicitly empty); see GetCurrentViewElementsEventHandler.
+                ModelCategoryList = ParseCategoryList(parameters, "modelCategoryList", requestId),
+                AnnotationCategoryList = ParseCategoryList(parameters, "annotationCategoryList", requestId),
+                IncludeHidden = parameters?["includeHidden"]?.Value<bool>() ?? false,
+                Limit = parameters?["limit"]?.Value<int>() ?? 100,
+                IncludeRelationships = parameters?["includeRelationships"]?.Value<bool>() ?? false
+            };
 
-                // Set query parameters
-                _handler.SetQueryParameters(
-                    modelCategoryList,
-                    annotationCategoryList,
-                    includeHidden,
-                    limit,
-                    includeRelationships);
+            int timeoutMs = CommandTimeouts.Resolve(CommandName, requestId, CommandTimeouts.CurrentViewElementsDefaultMs, parameters);
+            return RunOnRevitThread(request, requestId, timeoutMs);
+        }
 
-                // Raise the external event and wait for completion
-                if (RaiseAndWaitForCompletion(60000)) // 60-second timeout
-                {
-                    return _handler.ResultInfo;
-                }
-                else
-                {
-                    throw new TimeoutException("Retrieving elements from the current view timed out.");
-                }
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"Failed to retrieve elements from the current view: {ex.Message}");
-            }
+        private List<string> ParseCategoryList(JObject parameters, string name, string requestId)
+        {
+            JToken token = parameters?[name];
+            if (token == null || token.Type == JTokenType.Null)
+                return null;
+
+            if (!(token is JArray array) || array.Any(item => item.Type != JTokenType.String))
+                throw CommandErrors.Validation($"'{name}' must be an array of category names.", CommandName, requestId);
+
+            return array.Select(item => item.Value<string>()).ToList();
         }
     }
 }

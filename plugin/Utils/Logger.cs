@@ -1,43 +1,22 @@
-﻿using RevitMCPSDK.API.Interfaces;
-using System;
-using System.IO;
+using RevitMcp.Logging;
+using RevitMCPSDK.API.Interfaces;
 
 namespace revit_mcp_plugin.Utils
 {
+    /// <summary>
+    /// SDK logger used by the plugin and its command loader. Writes to the add-in stream
+    /// (Logs\mcp_addin_yyyyMMdd.log); the level comes from settings.logLevel.
+    /// </summary>
     public class Logger : ILogger
     {
-        private readonly string _logFilePath;
-        private LogLevel _currentLogLevel = LogLevel.Info;
-
         public Logger()
         {
-            _logFilePath = Path.Combine(PathManager.GetLogsDirectoryPath(), $"mcp_{DateTime.Now:yyyyMMdd}.log");
-
+            TraceLog.UseDirectory(PathManager.GetLogsDirectoryPath());
         }
 
         public void Log(LogLevel level, string message, params object[] args)
         {
-            if (level < _currentLogLevel)
-                return;
-
-            string formattedMessage = args.Length > 0 ? string.Format(message, args) : message;
-            string logEntry = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{level}] {formattedMessage}";
-
-            // Write to the Debug window.
-            // Output to debug window.
-            System.Diagnostics.Debug.WriteLine(logEntry);
-
-            // Write to the log file.
-            // Write to the logfile.
-            try
-            {
-                File.AppendAllText(_logFilePath, logEntry + Environment.NewLine);
-            }
-            catch
-            {
-                // Do not throw if writing to the log file fails.
-                // If writing to the logfile fails, do not throw an exception.
-            }
+            TraceLog.Write(LogChannel.Addin, Map(level), message, args);
         }
 
         public void Debug(string message, params object[] args)
@@ -58,6 +37,17 @@ namespace revit_mcp_plugin.Utils
         public void Error(string message, params object[] args)
         {
             Log(LogLevel.Error, message, args);
+        }
+
+        private static LogSeverity Map(LogLevel level)
+        {
+            switch (level)
+            {
+                case LogLevel.Debug: return LogSeverity.Debug;
+                case LogLevel.Warning: return LogSeverity.Warning;
+                case LogLevel.Error: return LogSeverity.Error;
+                default: return LogSeverity.Info;
+            }
         }
     }
 }

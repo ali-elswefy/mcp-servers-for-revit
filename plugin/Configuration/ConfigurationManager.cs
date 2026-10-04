@@ -47,6 +47,13 @@ namespace revit_mcp_plugin.Configuration
                 _logger.Error("Failed to load configuration file: {0}", ex.Message);
             }
 
+            // Apply the configured log level before anything else is logged at the new level.
+            RevitMcp.Logging.TraceLog.SetLevel(Config.Settings?.LogLevel);
+            _logger.Info("Log level: {0} (settings: '{1}', REVIT_MCP_LOG_LEVEL: '{2}'); log folder: {3}",
+                RevitMcp.Logging.TraceLog.CurrentLevel, Config.Settings?.LogLevel,
+                Environment.GetEnvironmentVariable(RevitMcp.Logging.TraceLog.LevelEnvironmentVariable),
+                RevitMcp.Logging.TraceLog.LogDirectory);
+
             // Record the load time.
             _lastConfigLoadTime = DateTime.Now;
         }

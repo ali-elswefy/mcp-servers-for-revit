@@ -1,11 +1,15 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withRevitConnection } from "../utils/ConnectionManager.js";
+import { revitErrorResult } from "../utils/errors.js";
 
 export function registerGetCurrentViewElementsTool(server: McpServer) {
   server.tool(
     "get_current_view_elements",
-    "Get elements from the current active view in Revit. You can filter by model categories (like Walls, Floors) or annotation categories (like Dimensions, Text). Use includeHidden to show/hide invisible elements and limit to control the number of returned elements.",
+    "Get elements from the current active view in Revit. You can filter by model categories (like Walls, Floors) or annotation categories (like Dimensions, Text). " +
+      "Omit both category lists to use a default set of common model and annotation categories (title blocks excluded). " +
+      "If you pass either list, only the categories you pass are returned. Passing only empty lists returns every category in the view. " +
+      "Unknown category names are rejected. Use includeHidden to show/hide invisible elements and limit to control the number of returned elements.",
     {
       modelCategoryList: z
         .array(z.string())
@@ -17,7 +21,7 @@ export function registerGetCurrentViewElementsTool(server: McpServer) {
         .array(z.string())
         .optional()
         .describe(
-          "List of Revit annotation category names (e.g., 'OST_Dimensions', 'OST_WallTags', 'OST_TextNotes')"
+          "List of Revit annotation category names (e.g., 'OST_Dimensions', 'OST_WallTags', 'OST_TextNotes', 'OST_TitleBlocks')"
         ),
       includeHidden: z
         .boolean()
@@ -35,8 +39,9 @@ export function registerGetCurrentViewElementsTool(server: McpServer) {
     },
     async (args, extra) => {
       const params = {
-        modelCategoryList: args.modelCategoryList || [],
-        annotationCategoryList: args.annotationCategoryList || [],
+        // Leave omitted lists undefined: omitted and empty mean different things to the add-in.
+        modelCategoryList: args.modelCategoryList,
+        annotationCategoryList: args.annotationCategoryList,
         includeHidden: args.includeHidden || false,
         limit: args.limit || 100,
         includeRelationships: args.includeRelationships || false,
@@ -59,16 +64,7 @@ export function registerGetCurrentViewElementsTool(server: McpServer) {
           ],
         };
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `get current view elements failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            },
-          ],
-        };
+        return revitErrorResult("get_current_view_elements", error);
       }
     }
   );

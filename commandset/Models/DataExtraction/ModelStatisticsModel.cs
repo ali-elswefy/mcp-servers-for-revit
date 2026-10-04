@@ -89,3 +89,68 @@ namespace RevitMCPCommandSet.Models.DataExtraction
         public string Message { get; set; }
     }
 }
+
+namespace RevitMCPCommandSet.Models.DataExtraction
+{
+    /// <summary>
+    /// Parameters for analyze_model_statistics. <see cref="Categories"/> null means full-model
+    /// statistics; otherwise only the listed categories are counted.
+    /// </summary>
+    public class ModelStatisticsRequest
+    {
+        public string RequestId { get; set; }
+        public List<string> Categories { get; set; }
+        public bool IncludeDetailedTypes { get; set; }
+        public bool IncludeLevels { get; set; }
+    }
+
+    /// <summary>
+    /// Compact result for a category-targeted request. Detail fields stay null (and are omitted)
+    /// unless explicitly requested.
+    /// </summary>
+    public class CategoryCountResult
+    {
+        [JsonProperty("success")]
+        public bool Success { get; set; }
+
+        [JsonProperty("mode")]
+        public string Mode { get; set; } = "categories";
+
+        [JsonProperty("projectName")]
+        public string ProjectName { get; set; }
+
+        [JsonProperty("categories")]
+        public List<CategoryCount> Categories { get; set; } = new List<CategoryCount>();
+
+        [JsonProperty("message")]
+        public string Message { get; set; }
+    }
+
+    public class CategoryCount
+    {
+        [JsonProperty("requestedName")]
+        public string RequestedName { get; set; }
+
+        [JsonProperty("categoryName")]
+        public string CategoryName { get; set; }
+
+        [JsonProperty("builtInCategory", NullValueHandling = NullValueHandling.Ignore)]
+        public string BuiltInCategory { get; set; }
+
+        /// <summary>Number of element instances (element types excluded).</summary>
+        [JsonProperty("elementCount")]
+        public int ElementCount { get; set; }
+
+        [JsonProperty("typeCount", NullValueHandling = NullValueHandling.Ignore)]
+        public int? TypeCount { get; set; }
+
+        [JsonProperty("familyCount", NullValueHandling = NullValueHandling.Ignore)]
+        public int? FamilyCount { get; set; }
+
+        [JsonProperty("types", NullValueHandling = NullValueHandling.Ignore)]
+        public List<TypeStatistics> Types { get; set; }
+
+        [JsonProperty("levels", NullValueHandling = NullValueHandling.Ignore)]
+        public List<LevelStatistics> Levels { get; set; }
+    }
+}
