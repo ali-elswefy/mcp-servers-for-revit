@@ -45,6 +45,8 @@ Defined in `commandset/Utils/ExternalEvents/CommandTimeouts.cs`:
 | `analyze_model_statistics` | 120 s |
 | `get_current_view_elements` | 60 s |
 | `get_current_view_info` | 10 s |
+| `query_linked_elements` | 120 s |
+| `list_linked_models`, `get_linked_element_details` | 60 s |
 
 Every wait is capped at 135 s. A client's outer timeout must be at least 15 s longer than the add-in's
 wait so the structured add-in timeout arrives first (Node server: 150 s; Python service: 150 s).
@@ -127,3 +129,74 @@ Parameters: `probeUiThread` (default `true`), `uiProbeTimeoutMs` (default 2000, 
 `revitUiThread.responsive` does. Revit raises Idling only when it becomes idle, so an old `lastIdlingUtc`
 alone does not mean Revit is blocked. Run health checks on their own connection so they do not queue
 behind a long-running command.
+
+## Linked models
+
+Three read-only commands query the Revit links of the host model. Coordinates are millimeters in the
+**host** model's coordinate system: each link instance's placement (including shared coordinates) is applied,
+so results can be compared with host elements directly. An `elementId` returned for a linked element is only
+unique inside its link; the pair `linkInstanceId` + `elementId` identifies it (`uniqueId` identifies it on its own).
+
+Errors use the usual envelope. `validation` errors carry `details.reason` where useful:
+`link_not_found` (with `availableLinks`), `link_ambiguous`, `element_not_found`, `host_element_not_found`,
+`host_element_has_no_box`, or `invalidCategories`. `revit_state` with `reason: no_loaded_links` means every
+selected link is unloaded or the host has none. Timeouts follow the usual `outcome` rules and are always
+retry-safe, because the commands do not change the model.
+
+### `list_linked_models`
+
+| Parameter | Default | Notes |
+| --- | --- | --- |
+| `includeCounts` | `false` | Counts the non-type elements of each loaded link; slower on large links |
+
+Returns `links[]` (one per `RevitLinkInstance`): `linkInstanceId`, `linkName`, `instanceName`, `documentTitle`,
+`status` (Revit's `LinkedFileStatus`), `isLoaded`, `path`, `transform` (`origin` mm, `rotationZDegrees`,
+`isIdentity`, `hasReflection`) and `elementCount` when requested. `unplacedLinkTypes[]` lists link types that
+have no instance in the host. Unloaded links are listed with their status and have no `transform`.
+
+### `query_linked_elements`
+
+| Parameter | Notes |
+| --- | --- |
+| `linkInstanceId` or `linkName` | One link by id, or links whose name contains the text. Both omitted: every loaded link. Giving both is a validation error. Unloaded links are skipped with a warning. |
+| `categories` | `OST_*` names or display names, resolved in each link. A name unknown in every link is a `validation` error; unknown in only some links is skipped there with a warning. `[]` is a validation error. |
+| `familyName`, `typeName` | Exact, case-insensitive |
+| `nameContains` | Substring of the element, family or type name, case-insensitive |
+| `levelName` | Exact, case-insensitive; matches only elements that have a level. When nothing matches, a warning lists the link's levels. |
+| `boundingBoxMin` + `boundingBoxMax` | `{ x, y, z }` mm in host coordinates, both required, min <= max. Matches elements whose host-coordinate bounding box intersects it (touching counts). |
+| `nearHostElementId` (+ `nearDistanceMm`, default 0) | Alternative to a box: the host element's bounding box grown by the distance. Not combinable with a box. |
+| `parameterFilters` | `[{ name, operator, value }]`, all must match. Operators: `equals`, `notEquals`, `contains`, `startsWith`, `isEmpty`, `hasValue`. Compared as the displayed string, case-insensitively; instance parameter first, then type parameter. A missing parameter matches only `isEmpty`. There are no numeric comparisons. |
+| `parameterNames` | Parameter values to return with each element; `null` where the element lacks the parameter |
+| `limit` | 1 to 1000, default 100, shared across all links |
+| `countOnly` | Return `categoryCounts` per link instead of elements. With no other filter this summarizes the whole link. |
+
+Without `countOnly`, at least one filter is required: listing a whole link is rejected.
+
+Result: `mode` (`elements` or `counts`), `links[]` with `matched`, `returned`, `elements[]` or `categoryCounts[]`,
+plus `totalMatched`, `totalReturned`, `truncated` and `warnings[]`. `matched` always counts every match, even
+beyond `limit`. Each element has `linkInstanceId`, `elementId`, `uniqueId`, `name`, `category`,
+`builtInCategory`, `familyName`, `typeName`, `typeId`, `level`, `boundingBox` (host mm), `location`
+(`point`, or `start` and `end`, host mm) and optional `parameters`. The order of elements is unspecified.
+
+### `get_linked_element_details`
+
+| Parameter | Default | Notes |
+| --- | --- | --- |
+| `linkInstanceId` or `linkName` | | The link; with `elementId` it must identify exactly one loaded link |
+| `elementId` or `uniqueId` | | Exactly one. A `uniqueId` is searched in every loaded link when no link is given. |
+| `includeTypeParameters` | `true` | |
+| `includeRelationships` | `false` | Host, group and hosted elements; ids are inside the link. Builds an index of the link's family instances, so it is slower. |
+
+Returns `element` (as above, without `parameters`), `elementClass`, `linkName`, `documentTitle`,
+`instanceParameters[]` and `typeParameters[]` (`name`, `value`, `storageType`, `isReadOnly`, `isShared`), and
+`relationships`. Values are strings as Revit displays them, in the linked document's units.
+
+### Limits
+
+- Only Revit links of the host are covered. Nested links (links inside a linked model) and CAD links are not.
+- Queries run on the whole linked document and ignore the host view, view filters and link visibility settings.
+- Elements without a category are skipped.
+- The bounding box filter is on axis-aligned boxes. For a link rotated about Z, an element's host box is the
+  box of its rotated link box, so it can be larger than the element's real footprint.
+- Query cost grows with the number of elements that pass the category and box filters, since the other
+  filters are checked per element. Use `categories` and a box or level where possible.

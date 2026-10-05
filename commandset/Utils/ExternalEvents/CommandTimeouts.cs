@@ -24,6 +24,9 @@ namespace RevitMCPCommandSet.Utils.ExternalEvents
         public const int CurrentViewInfoDefaultMs = 10_000;
         public const int CurrentViewElementsDefaultMs = 60_000;
         public const int ModelStatisticsDefaultMs = 120_000;
+        public const int ListLinkedModelsDefaultMs = 60_000;
+        public const int QueryLinkedElementsDefaultMs = 120_000;
+        public const int LinkedElementDetailsDefaultMs = 60_000;
 
         public const string TimeoutParameterName = "timeoutMs";
         public const string EnvironmentVariablePrefix = "REVIT_MCP_TIMEOUT_MS_";

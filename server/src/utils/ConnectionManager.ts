@@ -61,9 +61,11 @@ export async function withRevitConnection<T>(
 
         const onError = (error: Error) => {
           cleanup();
+          // Connection failures on "localhost" are often an AggregateError with an empty message but a code.
+          const reason = (error as NodeJS.ErrnoException).code || error.message || "no detail";
           reject(
             connectionError(
-              `Failed to connect to the Revit add-in at ${REVIT_HOST}:${REVIT_PORT} (${error.message}). Check that Revit is open and the MCP service is switched on.`
+              `Failed to connect to the Revit add-in at ${REVIT_HOST}:${REVIT_PORT} (${reason}). Check that Revit is open and the MCP service is switched on.`
             )
           );
         };

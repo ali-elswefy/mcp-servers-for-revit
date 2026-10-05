@@ -127,6 +127,21 @@
       "commandName": "create_dimensions",
       "description": "Create dimension annotations between elements or points in the current view",
       "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "list_linked_models",
+      "description": "List Revit links in the host model with load status, file path, placement transform and optional element counts",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "query_linked_elements",
+      "description": "Query elements inside linked models by category, family, type, name, level, host-coordinate box, proximity to a host element or parameter values; returns elements or per-category counts",
+      "assemblyPath": "RevitMCPCommandSet.dll"
+    },
+    {
+      "commandName": "get_linked_element_details",
+      "description": "Get all parameters, location and optional relationships of one element inside a linked model",
+      "assemblyPath": "RevitMCPCommandSet.dll"
     }
   ]
 }

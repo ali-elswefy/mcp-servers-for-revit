@@ -121,6 +121,9 @@ If using a release ZIP, the command set is pre-installed inside the plugin. For 
 | `get_material_quantities` | Calculate material quantities and takeoffs |
 | `ai_element_filter` | Intelligent element querying with host/group relationship filters and optional group expansion |
 | `analyze_model_statistics` | Analyze model complexity with element counts, or count only specific categories (`categories`) |
+| `list_linked_models` | List Revit links with load status, file path, placement and optional element counts |
+| `query_linked_elements` | Query elements inside linked models by category, family, type, name, level, box, proximity or parameter values, or count them per category |
+| `get_linked_element_details` | Get all parameters, location and relationships of one element inside a linked model |
 | `create_point_based_element` | Create point-based elements (door, window, furniture) |
 | `create_line_based_element` | Create line-based elements (wall, beam, pipe) |
 | `create_surface_based_element` | Create surface-based elements (floor, ceiling, roof) |
