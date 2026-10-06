@@ -7,6 +7,13 @@
     "website": "",
     "organization": "mcp-servers-for-revit"
   },
+  "builtInMethods": [
+    {
+      "methodName": "health_check",
+      "description": "Report whether the add-in's socket answered and whether Revit's UI thread can process an API event, without querying the model. Handled by the plugin itself, so it is always available and is not listed or toggled in Settings.",
+      "parameters": ["probeUiThread", "uiProbeTimeoutMs"]
+    }
+  ],
   "commands": [
     {
       "commandName": "say_hello",

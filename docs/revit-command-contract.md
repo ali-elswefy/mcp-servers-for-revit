@@ -105,6 +105,7 @@ No active document or view returns a `revit_state` error. The add-in never opens
 ## `health_check` (built into the plugin)
 
 Handled by the socket service itself, so it works even if no command set loaded. It never queries the model.
+It is listed under `builtInMethods` in `command.json` (not under `commands`, so Settings does not offer it as a toggle).
 
 Parameters: `probeUiThread` (default `true`), `uiProbeTimeoutMs` (default 2000, range 100 to 30000).
 
