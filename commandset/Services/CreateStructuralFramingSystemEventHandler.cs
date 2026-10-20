@@ -272,7 +272,7 @@ namespace RevitMCPCommandSet.Services
                     Message = errorDetails,
                     Response = null
                 };
-                TaskDialog.Show("Error", errorDetails);
+                CommandLog.Warning("create_structural_framing_system failed (returned to the caller in the result): {0}", errorDetails);
             }
             finally
             {

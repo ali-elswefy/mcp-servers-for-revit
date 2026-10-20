@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using RevitMCPCommandSet.Utils;
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Architecture;
 using RevitMCPCommandSet.Models.Common;
@@ -206,7 +207,7 @@ namespace RevitMCPCommandSet.Services
                     Message = $"Failed to create grids: {ex.Message}",
                     Response = null
                 };
-                TaskDialog.Show("Error", $"Failed to create grids: {ex.Message}");
+                CommandLog.Warning("create_grid failed (returned to the caller in the result): {0}", ex);
             }
             finally
             {

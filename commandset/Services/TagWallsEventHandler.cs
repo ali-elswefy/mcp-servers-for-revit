@@ -1,4 +1,5 @@
 using Autodesk.Revit.UI;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services
@@ -182,7 +183,7 @@ try
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Error", $"Error tagging walls: {ex.Message}");
+                CommandLog.Warning("tag_walls failed (returned to the caller in the result): {0}", ex);
                 TaggingResults = new
                 {
                     success = false,

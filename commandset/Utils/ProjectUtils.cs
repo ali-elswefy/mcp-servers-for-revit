@@ -422,7 +422,7 @@ namespace RevitMCPCommandSet.Utils
 
                 if (view3D == null)
                 {
-                    TaskDialog.Show("Error", "Unable to create or retrieve a 3D view");
+                    CommandLog.Warning("GetNearestFaceReference: unable to create or retrieve a 3D view; no host face found");
                     return null;
                 }
 
@@ -481,7 +481,7 @@ namespace RevitMCPCommandSet.Utils
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Error", $"An error occurred while finding the nearest face: {ex.Message}");
+                CommandLog.Warning("GetNearestFaceReference failed; no host face found: {0}", ex);
                 return null;
             }
         }
@@ -539,7 +539,7 @@ namespace RevitMCPCommandSet.Utils
 
                 if (view3D == null)
                 {
-                    TaskDialog.Show("Error", "Unable to create or retrieve a 3D view");
+                    CommandLog.Warning("GetNearestHostElement: unable to create or retrieve a 3D view; no host found");
                     return null;
                 }
 
@@ -604,7 +604,7 @@ namespace RevitMCPCommandSet.Utils
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Error", $"An error occurred while finding the nearest host element: {ex.Message}");
+                CommandLog.Warning("GetNearestHostElement failed; no host found: {0}", ex);
                 return null;
             }
         }
@@ -698,7 +698,7 @@ namespace RevitMCPCommandSet.Utils
 
             if (solidFill == null)
             {
-                TaskDialog.Show("Error", "No solid fill pattern was found");
+                CommandLog.Warning("HighlightFace: no solid fill pattern was found; face not highlighted");
                 return;
             }
 

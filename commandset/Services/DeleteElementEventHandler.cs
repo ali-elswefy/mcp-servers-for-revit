@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services
@@ -9,8 +10,17 @@ namespace RevitMCPCommandSet.Services
         // Execution result
         public bool IsSuccess { get; private set; }
 
-        // Number of successfully deleted elements
+        // Number of successfully deleted elements (including dependent elements Revit deleted with them)
         public int DeletedCount { get; private set; }
+
+        // IDs that are not element IDs, and IDs with no element in the document; neither was deleted
+        public List<string> InvalidIds { get; } = new List<string>();
+        public List<string> MissingIds { get; } = new List<string>();
+
+        // Why nothing was deleted when IsSuccess is false; returned to the caller instead of shown in a dialog
+        public string ErrorMessage { get; private set; }
+        public Exception Error { get; private set; }
+
         // State synchronization object
         public bool TaskCompleted { get; private set; }
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
@@ -24,18 +34,22 @@ namespace RevitMCPCommandSet.Services
         }
         public void Execute(UIApplication app)
         {
+            IsSuccess = false;
+            DeletedCount = 0;
+            InvalidIds.Clear();
+            MissingIds.Clear();
+            ErrorMessage = null;
+            Error = null;
             try
             {
                 var doc = app.ActiveUIDocument.Document;
-                DeletedCount = 0;
                 if (ElementIds == null || ElementIds.Length == 0)
                 {
-                    IsSuccess = false;
+                    ErrorMessage = "The element ID list is empty.";
                     return;
                 }
                 // Build the collection of element IDs to delete
                 List<ElementId> elementIdsToDelete = new List<ElementId>();
-                List<string> invalidIds = new List<string>();
                 foreach (var idStr in ElementIds)
                 {
                     if (int.TryParse(idStr, out int elementIdValue))
@@ -46,15 +60,20 @@ namespace RevitMCPCommandSet.Services
                         {
                             elementIdsToDelete.Add(elementId);
                         }
+                        else
+                        {
+                            MissingIds.Add(idStr);
+                        }
                     }
                     else
                     {
-                        invalidIds.Add(idStr);
+                        InvalidIds.Add(idStr);
                     }
                 }
-                if (invalidIds.Count > 0)
+                if (InvalidIds.Count > 0 || MissingIds.Count > 0)
                 {
-                    TaskDialog.Show("Warning", $"The following IDs are invalid or the elements do not exist: {string.Join(", ", invalidIds)}");
+                    CommandLog.Info("delete_element skipping ids: invalid=[{0}] missing=[{1}]",
+                        string.Join(", ", InvalidIds), string.Join(", ", MissingIds));
                 }
                 // Delete any valid elements
                 if (elementIdsToDelete.Count > 0)
@@ -65,22 +84,28 @@ namespace RevitMCPCommandSet.Services
 
                         // Delete elements in a batch
                         ICollection<ElementId> deletedIds = doc.Delete(elementIdsToDelete);
-                        DeletedCount = deletedIds.Count;
 
-                        transaction.Commit();
+                        // Revit rolls the transaction back when the deletion raises errors (see revitFailures).
+                        TransactionStatus status = transaction.Commit();
+                        if (status != TransactionStatus.Committed)
+                        {
+                            ErrorMessage = $"Revit did not commit the deletion (transaction status: {status}); nothing was deleted.";
+                            return;
+                        }
+                        DeletedCount = deletedIds.Count;
                     }
                     IsSuccess = true;
                 }
                 else
                 {
-                    TaskDialog.Show("Error", "There are no valid elements to delete.");
-                    IsSuccess = false;
+                    ErrorMessage = "None of the given IDs identifies an element in the active document; nothing was deleted.";
                 }
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Error", "Failed to delete elements: " + ex.Message);
-                IsSuccess = false;
+                Error = ex;
+                ErrorMessage = $"Failed to delete elements: {ex.Message}";
+                CommandLog.Warning("delete_element failed (returned to the caller as an error): {0}", ex);
             }
             finally
             {

@@ -86,6 +86,22 @@ namespace RevitMCPCommandSet.Utils.ExternalEvents
                 });
         }
 
+        /// <summary>
+        /// For commands on the SDK's ExternalEventCommandBase, which have no invocation: the handler
+        /// failed inside Revit and the failure is returned to the caller instead of shown in a dialog.
+        /// </summary>
+        public static CommandExecutionException Execution(string command, string requestId, string message, Exception error = null, object details = null)
+        {
+            return Create(message, JsonRPCErrorCodes.RevitApiError, new Dictionary<string, object>
+            {
+                ["kind"] = ErrorKinds.Execution,
+                ["command"] = command,
+                ["requestId"] = requestId,
+                ["exceptionType"] = error?.GetType().FullName,
+                ["details"] = details
+            });
+        }
+
         public static CommandExecutionException EventRejected<TRequest, TResult>(
             ExternalEventInvocation<TRequest, TResult> invocation, string raiseStatus)
         {

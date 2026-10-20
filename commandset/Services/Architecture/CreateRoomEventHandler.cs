@@ -276,7 +276,7 @@ namespace RevitMCPCommandSet.Services.Architecture
                     Success = false,
                     Message = $"Error creating rooms: {ex.Message}",
                 };
-                TaskDialog.Show("Error", $"Error creating rooms: {ex.Message}");
+                CommandLog.Warning("create_room failed (returned to the caller in the result): {0}", ex);
             }
             finally
             {

@@ -253,7 +253,7 @@ namespace RevitMCPCommandSet.Services
                     Success = false,
                     Message = $"Error creating line-based element: {ex.Message}",
                 };
-                TaskDialog.Show("Error", $"Error creating line-based element: {ex.Message}");
+                CommandLog.Warning("create_line_based_element failed (returned to the caller in the result): {0}", ex);
             }
             finally
             {

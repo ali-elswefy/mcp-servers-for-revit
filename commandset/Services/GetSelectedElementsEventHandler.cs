@@ -15,6 +15,9 @@ namespace RevitMCPCommandSet.Services
         // Execution result
         public List<Models.Common.ElementInfo> ResultElements { get; private set; }
 
+        // Set when Execute failed; the command returns it to the caller as an error
+        public Exception Error { get; private set; }
+
         // State synchronization object
         public bool TaskCompleted { get; private set; }
         private readonly ManualResetEvent _resetEvent = new ManualResetEvent(false);
@@ -34,6 +37,7 @@ namespace RevitMCPCommandSet.Services
 
         public void Execute(UIApplication app)
         {
+            Error = null;
             try
             {
                 var uiDoc = app.ActiveUIDocument;
@@ -70,7 +74,8 @@ namespace RevitMCPCommandSet.Services
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Error", "Failed to get selected elements: " + ex.Message);
+                Error = ex;
+                CommandLog.Warning("get_selected_elements failed (returned to the caller as an error): {0}", ex);
                 ResultElements = new List<Models.Common.ElementInfo>();
             }
             finally

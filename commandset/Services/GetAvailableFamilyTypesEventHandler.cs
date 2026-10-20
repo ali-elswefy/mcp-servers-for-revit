@@ -1,5 +1,6 @@
 using Autodesk.Revit.UI;
 using RevitMCPCommandSet.Models.Common;
+using RevitMCPCommandSet.Utils;
 using RevitMCPSDK.API.Interfaces;
 
 namespace RevitMCPCommandSet.Services
@@ -8,6 +9,9 @@ namespace RevitMCPCommandSet.Services
     {
         // Execution result
         public List<FamilyTypeInfo> ResultFamilyTypes { get; private set; }
+
+        // Set when Execute failed; the command returns it to the caller as an error
+        public Exception Error { get; private set; }
 
         // State synchronization object
         public bool TaskCompleted { get; private set; }
@@ -27,6 +31,7 @@ namespace RevitMCPCommandSet.Services
 
         public void Execute(UIApplication app)
         {
+            Error = null;
             try
             {
                 var doc = app.ActiveUIDocument.Document;
@@ -124,7 +129,9 @@ namespace RevitMCPCommandSet.Services
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Error", "Failed to get family types: " + ex.Message);
+                Error = ex;
+                ResultFamilyTypes = null;
+                CommandLog.Warning("get_available_family_types failed (returned to the caller as an error): {0}", ex);
             }
             finally
             {

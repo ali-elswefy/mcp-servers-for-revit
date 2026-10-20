@@ -234,7 +234,7 @@ namespace RevitMCPCommandSet.Services
                     Success = false,
                     Message = $"Error creating point-based element: {ex.Message}",
                 };
-                TaskDialog.Show("Error", $"Error creating point-based element: {ex.Message}");
+                CommandLog.Warning("create_point_based_element failed (returned to the caller in the result): {0}", ex);
             }
             finally
             {

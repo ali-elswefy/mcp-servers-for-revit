@@ -334,7 +334,7 @@ namespace RevitMCPCommandSet.Services
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Error", $"Error tagging rooms: {ex.Message}");
+                CommandLog.Warning("tag_rooms failed (returned to the caller in the result): {0}", ex);
                 TaggingResults = new
                 {
                     success = false,

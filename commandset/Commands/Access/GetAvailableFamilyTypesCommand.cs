@@ -1,6 +1,7 @@
 ﻿using Autodesk.Revit.UI;
 using Newtonsoft.Json.Linq;
 using RevitMCPCommandSet.Services;
+using RevitMCPCommandSet.Utils.ExternalEvents;
 using RevitMCPSDK.API.Base;
 
 namespace RevitMCPCommandSet.Commands.Access
@@ -36,6 +37,8 @@ namespace RevitMCPCommandSet.Commands.Access
                     // Raise the external event and wait up to 15 seconds for completion
                     if (RaiseAndWaitForCompletion(15000))
                     {
+                        if (_handler.Error != null)
+                            throw CommandErrors.Execution(CommandName, requestId, $"Failed to retrieve available family types: {_handler.Error.Message}", _handler.Error);
                         return _handler.ResultFamilyTypes;
                     }
                     else
@@ -45,7 +48,7 @@ namespace RevitMCPCommandSet.Commands.Access
                 }
                 catch (Exception ex)
                 {
-                    throw new Exception($"Failed to retrieve available family types: {ex.Message}");
+                    throw new Exception($"Failed to retrieve available family types: {ex.Message}", ex);
                 }
             }
         }

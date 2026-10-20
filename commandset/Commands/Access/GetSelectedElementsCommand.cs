@@ -1,6 +1,7 @@
 ﻿using Autodesk.Revit.UI;
 using Newtonsoft.Json.Linq;
 using RevitMCPCommandSet.Services;
+using RevitMCPCommandSet.Utils.ExternalEvents;
 using RevitMCPSDK.API.Base;
 using System;
 using System.Collections.Generic;
@@ -39,6 +40,8 @@ namespace RevitMCPCommandSet.Commands.Access
                     // Raise the external event and wait for completion
                     if (RaiseAndWaitForCompletion(15000))
                     {
+                        if (_handler.Error != null)
+                            throw CommandErrors.Execution(CommandName, requestId, $"Failed to retrieve the selected elements: {_handler.Error.Message}", _handler.Error);
                         return _handler.ResultElements;
                     }
                     else
@@ -48,7 +51,7 @@ namespace RevitMCPCommandSet.Commands.Access
                 }
                 catch (Exception ex)
                 {
-                    throw new Exception($"Failed to retrieve the selected elements: {ex.Message}");
+                    throw new Exception($"Failed to retrieve the selected elements: {ex.Message}", ex);
                 }
             }
         }
