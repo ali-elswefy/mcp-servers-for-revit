@@ -63,6 +63,7 @@
     </ItemGroup>
     <ItemGroup>
         <Compile Include="..\shared\TraceLog.cs" Link="Utils\TraceLog.cs"/>
+        <Compile Include="..\shared\RevitDialogDetector.cs" Link="Utils\RevitDialogDetector.cs"/>
     </ItemGroup>
     <ItemGroup>
         <Resource Include="Core\Ressources\icon-16.png"/>

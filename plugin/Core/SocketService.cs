@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -9,6 +10,7 @@ using System.Threading;
 using Autodesk.Revit.UI;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using RevitMcp.Interop;
 using RevitMcp.Logging;
 using RevitMCPSDK.API.Models.JsonRPC;
 using RevitMCPSDK.API.Interfaces;
@@ -33,6 +35,7 @@ namespace revit_mcp_plugin.Core
         public const string HealthCheckMethod = "health_check";
         private const int DefaultUiProbeTimeoutMs = 2000;
         private const int MaxUiProbeTimeoutMs = 30000;
+        private const int ModalRecheckDelayMs = 300;
 
         private readonly UiThreadProbe _uiThreadProbe = new UiThreadProbe();
         private bool _idlingSubscribed;
@@ -70,6 +73,7 @@ namespace revit_mcp_plugin.Core
 
             // Initialize ExternalEventManager.
             ExternalEventManager.Instance.Initialize(uiApp, _logger);
+            RevitDialogDetector.SetMainWindow(uiApp.MainWindowHandle);
 
             // Initialize runs in a Revit API context, which external events and Idling subscriptions require.
             _uiThreadProbe.EnsureCreated();
@@ -92,7 +96,8 @@ namespace revit_mcp_plugin.Core
             // Load configuration and register commands.
             ConfigurationManager configManager = new ConfigurationManager(_logger);
             configManager.LoadConfiguration();
-            
+            RevitFailureMonitor.Instance.Configure(configManager.Config.Settings.FailureHandling);
+
 
             //// Read the service port from the configuration.
             //if (configManager.Config.Settings.Port > 0)
@@ -324,7 +329,33 @@ namespace revit_mcp_plugin.Core
 
                 if (request.Method == HealthCheckMethod)
                 {
-                    return CreateSuccessResponse(request.Id, BuildHealthReport(request.GetParamsObject()));
+                    // Also hands over failures from commands that finished after their caller stopped waiting.
+                    return CommandExecutor.AttachFailureReport(
+                        CreateSuccessResponse(request.Id, BuildHealthReport(request.GetParamsObject())),
+                        RevitFailureMonitor.Instance.TakeUndeliveredReport());
+                }
+
+                // While a modal dialog is open Revit cannot run external events, so the command could
+                // only wait until it times out. Refuse it now and tell the caller a user must act.
+                RevitUiState uiState = DetectBlockingDialog();
+                if (uiState.ModalDialogOpen)
+                {
+                    Wire(LogSeverity.Warning, "conn={0} req={1} method={2} refused: Revit is blocked by {3}",
+                        trace.ConnectionId, request.Id, request.Method, uiState.DescribeDialogs());
+                    return Fail(trace, request.Id, JsonRPCErrorCodes.ResourceUnavailable,
+                        $"Revit is showing a dialog that needs the user's input ({uiState.DescribeDialogs()}). " +
+                        $"{request.Method} was NOT executed. Stop and ask the user to respond to the dialog in Revit; " +
+                        "do not call any more Revit tools until the user confirms it is closed.",
+                        new Dictionary<string, object>
+                        {
+                            ["kind"] = RevitDialogDetector.ErrorKind,
+                            ["reason"] = RevitDialogDetector.ErrorReason,
+                            ["command"] = request.Method,
+                            ["requestId"] = request.Id,
+                            ["dialogs"] = uiState.DialogsData(),
+                            ["executed"] = false,
+                            ["retrySafe"] = true
+                        });
                 }
 
                 // Look up and execute the command, preserving structured error codes and data.
@@ -366,6 +397,17 @@ namespace revit_mcp_plugin.Core
             return CreateErrorResponse(id, code, message, data);
         }
 
+        // A dialog that is closing can still disable Revit's main window for a moment; look twice before refusing.
+        private static RevitUiState DetectBlockingDialog()
+        {
+            RevitUiState state = RevitDialogDetector.Detect();
+            if (!state.ModalDialogOpen)
+                return state;
+
+            Thread.Sleep(ModalRecheckDelayMs);
+            return RevitDialogDetector.Detect();
+        }
+
         private void OnIdling(object sender, Autodesk.Revit.UI.Events.IdlingEventArgs e)
         {
             Interlocked.Exchange(ref _lastIdlingUtcTicks, DateTime.UtcNow.Ticks);
@@ -398,9 +440,21 @@ namespace revit_mcp_plugin.Core
                 secondsSinceLastIdling = lastIdlingUtc.HasValue ? Math.Round((DateTime.UtcNow - lastIdlingUtc.Value).TotalSeconds, 1) : (double?)null
             };
 
-            object uiThread = probeUiThread
-                ? _uiThreadProbe.Probe(probeTimeoutMs)
-                : new { probed = false, responsive = (bool?)null, reason = "probe_not_requested" };
+            // Checked before the probe: a modal dialog is the usual reason the probe times out.
+            RevitUiState uiState = RevitDialogDetector.Detect();
+            var revitUi = new
+            {
+                @checked = uiState.Checked,
+                modalDialogOpen = uiState.ModalDialogOpen,
+                userInputRequired = uiState.ModalDialogOpen,
+                dialogs = uiState.DialogsData()
+            };
+
+            object uiThread = !probeUiThread
+                ? new { probed = false, responsive = (bool?)null, reason = "probe_not_requested" }
+                : uiState.ModalDialogOpen
+                    ? new { probed = false, responsive = (bool?)false, reason = "modal_dialog_open" }
+                    : _uiThreadProbe.Probe(probeTimeoutMs);
 
             var logging = new
             {
@@ -410,7 +464,13 @@ namespace revit_mcp_plugin.Core
                 addinLog = TraceLog.GetLogPath(LogChannel.Addin)
             };
 
-            return new { plugin, revitUiThread = uiThread, logging };
+            var failureHandling = new
+            {
+                warnings = RevitFailureMonitor.Instance.WarningPolicy,
+                errors = RevitFailureMonitor.Instance.ErrorPolicy
+            };
+
+            return new { plugin, revitUi, revitUiThread = uiThread, failureHandling, logging };
         }
 
         private string CreateSuccessResponse(string id, object result)

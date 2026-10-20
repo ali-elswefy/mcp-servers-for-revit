@@ -2,8 +2,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { surfaceRevitFailures } from "../utils/revitFailures.js";
 
 export async function registerTools(server: McpServer) {
+  // Every tool reports Revit failures the add-in silenced, whatever it does with the result.
+  surfaceRevitFailures(server);
+
   // Get the directory path of the current file
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);

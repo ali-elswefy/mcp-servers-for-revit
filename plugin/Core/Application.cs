@@ -1,6 +1,7 @@
 ﻿using System;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Events;
+using RevitMcp.Interop;
 using revit_mcp_plugin.Configuration;
 using revit_mcp_plugin.Utils;
 using System.Reflection;
@@ -41,6 +42,11 @@ namespace revit_mcp_plugin.Core
                 application.ControlledApplication.VersionNumber,
                 Assembly.GetExecutingAssembly().GetName().Version,
                 configManager.Config.Settings.AutoStart);
+
+            // Failures from MCP transactions are handled without dialogs; see RevitFailureMonitor.
+            RevitFailureMonitor.Instance.Configure(configManager.Config.Settings.FailureHandling);
+            RevitFailureMonitor.Instance.Subscribe(application.ControlledApplication);
+            RevitDialogDetector.SetMainWindow(application.MainWindowHandle);
 
             if (configManager.Config.Settings.AutoStart)
             {
@@ -92,6 +98,8 @@ namespace revit_mcp_plugin.Core
                 {
                     _controlledApplication.Idling -= StartServerOnIdle;
                 }
+
+                RevitFailureMonitor.Instance.Unsubscribe(application.ControlledApplication);
 
                 if (SocketService.Instance.IsRunning)
                 {

@@ -151,6 +151,7 @@ namespace revit_mcp_plugin.Core
                             if (command.CommandName == config.CommandName)
                             {
                                 _commandRegistry.RegisterCommand(command);
+                                RevitFailureMonitor.Instance.RegisterCommandSetAssembly(assembly);
                                 _logger.Info("Created command instance [{0}]: {1}",
                                     command.CommandName, Path.GetFileName(assemblyPath));
                                 break; // Exit the loop after finding the matching command.

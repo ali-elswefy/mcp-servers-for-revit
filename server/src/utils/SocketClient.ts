@@ -1,5 +1,6 @@
 import * as net from "net";
 import { RevitCommandError } from "./errors.js";
+import { recordRevitFailures } from "./revitFailures.js";
 
 /**
  * Client-side wait for one command. Must stay above the add-in's maximum external-event wait
@@ -101,6 +102,11 @@ export class RevitClientConnection {
 
       this.pendingRequests.delete(requestId);
       clearTimeout(pending.timer);
+
+      // Failures the add-in resolved without a dialog; reported on the envelope for results and errors alike.
+      if (response.revitFailures) {
+        recordRevitFailures(pending.command, response.revitFailures);
+      }
 
       if (response.error) {
         pending.reject(RevitCommandError.fromJsonRpcError(response.error));

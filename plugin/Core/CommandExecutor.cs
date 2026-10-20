@@ -1,3 +1,4 @@
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using RevitMCPSDK.API.Interfaces;
 using RevitMCPSDK.API.Models.JsonRPC;
@@ -77,30 +78,34 @@ namespace revit_mcp_plugin.Core
 
                 _logger.Info("req={0} cmd={1} dispatch", request.Id, request.Method);
 
-                // Execute the command.
-                try
+                // Execute the command. Revit failures raised by its transactions are reported with the response.
+                using (var failures = RevitFailureMonitor.Instance.BeginRequest(request.Id, request.Method))
                 {
-                    object result = command.Execute(request.GetParamsObject(), request.Id);
-                    _logger.Info("req={0} cmd={1} dispatch done ok in {2}ms", request.Id, request.Method, clock.ElapsedMilliseconds);
+                    try
+                    {
+                        object result = command.Execute(request.GetParamsObject(), request.Id);
+                        _logger.Info("req={0} cmd={1} dispatch done ok in {2}ms", request.Id, request.Method, clock.ElapsedMilliseconds);
 
-                    return CreateSuccessResponse(request.Id, result);
-                }
-                catch (Exception ex) when (FindCommandExecutionException(ex) is CommandExecutionException commandEx)
-                {
-                    object data = commandEx.ErrorData ?? new { kind = ErrorKindInternal };
-                    string response = Fail(outcome, request.Id, commandEx.ErrorCode, commandEx.Message, data);
-                    _logger.Warning("req={0} cmd={1} dispatch done in {2}ms: {3}: {4}",
-                        request.Id, request.Method, clock.ElapsedMilliseconds, outcome, commandEx.Message);
-                    return response;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error("req={0} cmd={1} dispatch failed in {2}ms with an unexpected exception: {3}",
-                        request.Id, request.Method, clock.ElapsedMilliseconds, ex);
-                    return Fail(outcome, request.Id,
-                        JsonRPCErrorCodes.InternalError,
-                        ex.Message,
-                        new { kind = ErrorKindInternal });
+                        return WithFailureReport(CreateSuccessResponse(request.Id, result), failures, request);
+                    }
+                    catch (Exception ex) when (FindCommandExecutionException(ex) is CommandExecutionException commandEx)
+                    {
+                        object data = commandEx.ErrorData ?? new { kind = ErrorKindInternal };
+                        string response = WithFailureReport(Fail(outcome, request.Id, commandEx.ErrorCode, commandEx.Message, data),
+                            failures, request);
+                        _logger.Warning("req={0} cmd={1} dispatch done in {2}ms: {3}: {4}",
+                            request.Id, request.Method, clock.ElapsedMilliseconds, outcome, commandEx.Message);
+                        return response;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error("req={0} cmd={1} dispatch failed in {2}ms with an unexpected exception: {3}",
+                            request.Id, request.Method, clock.ElapsedMilliseconds, ex);
+                        return WithFailureReport(Fail(outcome, request.Id,
+                            JsonRPCErrorCodes.InternalError,
+                            ex.Message,
+                            new { kind = ErrorKindInternal }), failures, request);
+                    }
                 }
             }
             catch (Exception ex)
@@ -127,6 +132,32 @@ namespace revit_mcp_plugin.Core
             }
 
             return CreateErrorResponse(id, code, message, data);
+        }
+
+        /// <summary>
+        /// Adds "revitFailures" to the response envelope (next to "result" or "error") when Revit
+        /// reported failures in the command's transactions, including ones the failure handler
+        /// silenced. On the envelope it works for every result shape and for errors alike.
+        /// </summary>
+        private string WithFailureReport(string response, RevitFailureMonitor.RequestFailures failures, JsonRPCRequest request)
+        {
+            object report = failures.BuildReport();
+            if (report == null)
+                return response;
+
+            _logger.Info("req={0} cmd={1} response carries revitFailures", request.Id, request.Method);
+            return AttachFailureReport(response, report);
+        }
+
+        /// <summary>Adds a "revitFailures" report to a serialized JSON-RPC response.</summary>
+        public static string AttachFailureReport(string response, object report)
+        {
+            if (report == null)
+                return response;
+
+            JObject envelope = JObject.Parse(response);
+            envelope["revitFailures"] = JToken.FromObject(report);
+            return envelope.ToString(Formatting.None);
         }
 
         // Commands sometimes wrap a structured error in a generic exception; keep the structure.

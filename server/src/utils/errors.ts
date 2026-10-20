@@ -9,6 +9,7 @@ export type RevitErrorKind =
   | "revit_state"
   | "revit_unavailable"
   | "execution"
+  | "user_input_required"
   | "invalid_request"
   | "method_not_found"
   | "internal";
@@ -64,6 +65,7 @@ export function revitErrorResult(operation: string, error: unknown) {
           {
             ok: false,
             operation,
+            ...(err.kind === "user_input_required" ? { stop: true, instruction: USER_INPUT_REQUIRED_INSTRUCTION } : {}),
             error: { kind: err.kind, code: err.code, message: err.detail, ...err.data },
           },
           null,
@@ -73,3 +75,11 @@ export function revitErrorResult(operation: string, error: unknown) {
     ],
   };
 }
+
+/**
+ * Revit is blocked by a modal dialog (a failure dialog, a task dialog, an options window) until a
+ * person answers it. Every Revit command fails the same way until then, so the agent must hand over.
+ */
+export const USER_INPUT_REQUIRED_INSTRUCTION =
+  "Revit is waiting for the user to answer a dialog (see error.dialogs). Stop calling Revit tools, tell the user which dialog is open, " +
+  "and wait for them to confirm they have dealt with it. Do not retry or work around it.";

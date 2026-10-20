@@ -16,6 +16,7 @@ return a deterministic message, without asking the model to interpret a known fa
 | `validation` | add-in | Bad parameters, e.g. an unknown category name (`details.invalidCategories`) | After fixing the input |
 | `revit_state` | add-in | No active document (`reason: no_active_document`) or view (`no_active_view`) | After the user fixes Revit's state |
 | `revit_unavailable` | add-in | Revit refused to queue the external event; not executed | Yes |
+| `user_input_required` | add-in | A modal dialog is open in Revit (`reason: modal_dialog_open`, `dialogs[]`). Revit cannot run any command until the user answers it | Only after the user confirms the dialog is closed; see below |
 | `execution` | add-in | The command threw inside Revit | Depends on the command |
 | `invalid_request`, `method_not_found`, `internal` | add-in | Protocol or unexpected errors | No |
 
@@ -53,6 +54,73 @@ wait so the structured add-in timeout arrives first (Node server: 150 s; Python 
 Waits can be overridden per request with a `timeoutMs` parameter, or per command with the environment
 variable `REVIT_MCP_TIMEOUT_MS_<COMMAND_NAME>` (e.g. `REVIT_MCP_TIMEOUT_MS_SEND_CODE_TO_REVIT`); both are
 clamped to 1 s to 135 s. A client with a shorter budget should pass `timeoutMs` = its budget minus 15 s.
+
+## Blocking dialogs (`user_input_required`)
+
+While a modal dialog is open (a failure dialog, a task dialog, an options window, another add-in's dialog),
+Revit raises no Idling events, so no external event and no MCP command can run. The add-in detects this with
+Win32 (Revit's main window is disabled by the modal window) and answers with `kind: "user_input_required"`
+instead of waiting until the request times out:
+
+- **Before dispatch** (every command): the request is refused with `executed: false`, `retrySafe: true`.
+- **While waiting** (commands on the queued execution base, e.g. `send_code_to_revit`): when a dialog keeps Revit
+  blocked for 1.5 s the caller stops waiting. `outcome` follows the timeout rules: `cancelled_before_start` (never
+  runs) or `outcome_unknown` (the command opened the dialog or was running when it appeared; it continues once
+  the user answers, and `modelMayHaveChanged` says whether it can change the model).
+
+`dialogs[]` has `title`, `className` and, for classic Win32 dialogs, `text` and `buttons`. Task dialogs and WPF
+windows only have a title.
+
+Clients must stop sending Revit commands and ask the user to deal with the dialog. They must not retry
+automatically. The Node server adds `stop: true` and an `instruction` to the tool result.
+
+## Revit failures in MCP transactions (`revitFailures`)
+
+The plugin handles Revit failures (warnings and errors raised when a transaction commits) for every transaction
+committed by command-set code, including transactions opened by `send_code_to_revit` snippets, so no failure
+dialog blocks Revit during an MCP command. Transactions the user runs in Revit are never touched. The policy is
+set in `Commands\commandRegistry.json` and applied when the service is switched on:
+
+```json
+"settings": { "failureHandling": { "warnings": "suppress", "errors": "rollback" } }
+```
+
+| Setting | Value | Effect |
+| --- | --- | --- |
+| `warnings` | `suppress` (default) | Warnings are deleted, so no dialog appears and they are not kept in the model's warning list |
+| | `keep` | Warnings are left to Revit as usual |
+| `errors` | `rollback` (default) | A transaction with errors is rolled back without a dialog. Its changes are not applied |
+| | `ask_user` | Errors are left to Revit's failure dialog. The command then reports `user_input_required` |
+
+Whenever failures were recorded, including ones the handler silenced, the JSON-RPC response carries a
+`revitFailures` object on the envelope, next to `result` or `error`. It is there for every result shape, and on
+errors too:
+
+```json
+{ "jsonrpc": "2.0", "id": "...", "result": { ... },
+  "revitFailures": {
+    "silenced": true, "rolledBackTransactions": 1, "warningsSuppressed": 2, "warningsKept": 0, "errorsLeftToUser": 0,
+    "message": "Revit reported failures that the MCP failure handler resolved without showing the user a dialog. 1 transaction(s) had errors and were rolled back: ...",
+    "failures": [
+      { "transaction": "Create Level", "severity": "Error", "description": "...", "action": "rolled_back",
+        "failureId": "<guid>", "elementIds": [123456], "recordedUtc": "..." }
+    ]
+  } }
+```
+
+`silenced` is true when the handler suppressed a warning or rolled back a transaction, so the user saw nothing in
+Revit. `action` is `warning_suppressed`, `warning_kept`, `rolled_back` or `left_to_user`.
+
+Failures raised while no request was waiting (a command that finished after its caller timed out or gave up on a
+dialog) are not lost. They are attached to the next response, either a command or `health_check`, and marked
+`earlier: true`. Each failure is reported once.
+
+The Node server puts every `revitFailures` report into a text block at the top of the tool result, starting
+`REVIT FAILURES:`, for every tool. Other clients should do the same rather than leave it to the model to find
+the field. Many commands do not check
+whether their transaction committed, so a rolled-back transaction can sit next to a result that lists elements
+as created. Clients should treat `rolledBackTransactions > 0` as authoritative. Failures are matched to requests
+by time: if a client sends several requests at once, each one sees all failures recorded while it ran.
 
 ## `send_code_to_revit`
 
@@ -115,10 +183,12 @@ Parameters: `probeUiThread` (default `true`), `uiProbeTimeoutMs` (default 2000, 
     "reachable": true, "socketRunning": true, "port": 8080, "startedUtc": "...",
     "registeredCommandCount": 30, "lastIdlingUtc": "...", "secondsSinceLastIdling": 4.2
   },
+  "revitUi": { "checked": true, "modalDialogOpen": false, "userInputRequired": false, "dialogs": [] },
   "revitUiThread": {
     "probed": true, "responsive": true, "latencyMs": 12, "timeoutMs": 2000,
     "raiseStatus": "Accepted", "hasActiveDocument": true
   },
+  "failureHandling": { "warnings": "suppress", "errors": "rollback" },
   "logging": {
     "level": "Info", "directory": "...\\revit_mcp_plugin\\Logs",
     "protocolLog": "...\\mcp_protocol_20261004.log", "addinLog": "...\\mcp_addin_20261004.log"
@@ -126,7 +196,9 @@ Parameters: `probeUiThread` (default `true`), `uiProbeTimeoutMs` (default 2000, 
 }
 ```
 
-`plugin.reachable` only shows that the socket answered. It does not show that Revit API work can run;
+`revitUi` is checked without the Revit API, so it answers even while Revit is blocked. When
+`revitUi.modalDialogOpen` is true the UI-thread probe is skipped (`reason: modal_dialog_open`), because it
+could only time out. `plugin.reachable` only shows that the socket answered. It does not show that Revit API work can run;
 `revitUiThread.responsive` does. Revit raises Idling only when it becomes idle, so an old `lastIdlingUtc`
 alone does not mean Revit is blocked. Run health checks on their own connection so they do not queue
 behind a long-running command.

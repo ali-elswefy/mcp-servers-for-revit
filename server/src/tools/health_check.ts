@@ -8,7 +8,8 @@ export function registerHealthCheckTool(server: McpServer) {
     "health_check",
     "Check the Revit connection without querying the model. Reports two separate facts: whether the Revit add-in's socket answered (plugin.reachable), " +
       "and whether Revit's UI thread processed a no-op API event within the probe timeout (revitUiThread.responsive). " +
-      "A reachable plugin with an unresponsive UI thread means Revit is busy (for example a modal dialog or a long operation) and model commands will time out.",
+      "A reachable plugin with an unresponsive UI thread means Revit is busy (for example a modal dialog or a long operation) and model commands will time out. " +
+      "revitUi.userInputRequired is true when a modal dialog is open in Revit (revitUi.dialogs lists it): stop calling Revit tools and ask the user to respond to the dialog first.",
     {
       probeUiThread: z
         .boolean()

@@ -1,3 +1,4 @@
+using RevitMcp.Interop;
 using RevitMCPSDK.API.Models.JsonRPC;
 using RevitMCPSDK.Exceptions;
 
@@ -14,6 +15,9 @@ namespace RevitMCPCommandSet.Utils.ExternalEvents
         public const string RevitState = "revit_state";
         public const string RevitUnavailable = "revit_unavailable";
         public const string Execution = "execution";
+
+        /// <summary>A modal dialog in Revit needs the user's answer; see <see cref="RevitDialogDetector"/>.</summary>
+        public const string UserInputRequired = RevitDialogDetector.ErrorKind;
     }
 
     /// <summary>Values of the <c>outcome</c> field on timeout errors.</summary>
@@ -133,6 +137,41 @@ namespace RevitMCPCommandSet.Utils.ExternalEvents
                 ["invocationId"] = invocation.InvocationId,
                 ["timeoutMs"] = timeoutMs,
                 ["elapsedMs"] = invocation.ElapsedMilliseconds,
+                ["started"] = started,
+                ["modelMayHaveChanged"] = modelMayHaveChanged,
+                ["retrySafe"] = !modelMayHaveChanged
+            });
+        }
+
+        /// <summary>
+        /// The caller stopped waiting because a modal dialog blocks Revit. Same envelope as the
+        /// plugin's pre-dispatch check, plus the timeout fields that say whether the request ran.
+        /// </summary>
+        public static CommandExecutionException UserInputRequired<TRequest, TResult>(
+            ExternalEventInvocation<TRequest, TResult> invocation, InvocationState state, RevitUiState uiState, bool mayModifyModel)
+        {
+            bool started = state == InvocationState.OutcomeUnknown;
+            bool modelMayHaveChanged = started && mayModifyModel;
+            string dialogs = uiState.DescribeDialogs();
+
+            string message = started
+                ? $"Revit is showing a dialog that needs the user's input ({dialogs}) while {invocation.CommandName} was running. " +
+                  "It continues once the user answers the dialog, so its outcome is unknown" +
+                  (modelMayHaveChanged ? " and it may still change the model. " : ". ")
+                : $"Revit is showing a dialog that needs the user's input ({dialogs}). {invocation.CommandName} was cancelled before it started and will not run. ";
+            message += "Stop and ask the user to respond to the dialog in Revit; do not call any more Revit tools until the user confirms it is closed.";
+
+            return Create(message, JsonRPCErrorCodes.ResourceUnavailable, new Dictionary<string, object>
+            {
+                ["kind"] = ErrorKinds.UserInputRequired,
+                ["reason"] = RevitDialogDetector.ErrorReason,
+                ["outcome"] = started ? TimeoutOutcomes.OutcomeUnknown : TimeoutOutcomes.CancelledBeforeStart,
+                ["command"] = invocation.CommandName,
+                ["requestId"] = invocation.RequestId,
+                ["invocationId"] = invocation.InvocationId,
+                ["dialogs"] = uiState.DialogsData(),
+                ["elapsedMs"] = invocation.ElapsedMilliseconds,
+                ["executed"] = started,
                 ["started"] = started,
                 ["modelMayHaveChanged"] = modelMayHaveChanged,
                 ["retrySafe"] = !modelMayHaveChanged

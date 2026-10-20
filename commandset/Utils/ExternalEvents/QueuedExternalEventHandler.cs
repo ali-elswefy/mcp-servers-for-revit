@@ -67,12 +67,12 @@ namespace RevitMCPCommandSet.Utils.ExternalEvents
                 }
 
                 CommandLog.Info("{0} finished {1} in {2}ms (total {3}ms){4}", invocation.LogTag, outcome, runClock.ElapsedMilliseconds,
-                    invocation.ElapsedMilliseconds, delivered ? string.Empty : " after its caller had already timed out");
+                    invocation.ElapsedMilliseconds, delivered ? string.Empty : " after its caller had already stopped waiting");
 
                 if (!delivered)
                 {
                     CommandLog.Warning(
-                        "{0} result was NOT delivered: the caller timed out and was told the outcome is unknown. The command ran to completion ({1}).",
+                        "{0} result was NOT delivered: the caller stopped waiting (timeout or blocking dialog) and was told the outcome is unknown. The command ran to completion ({1}).",
                         invocation.LogTag, outcome);
                 }
             }

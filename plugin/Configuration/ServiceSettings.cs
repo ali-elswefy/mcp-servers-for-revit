@@ -28,5 +28,24 @@ namespace revit_mcp_plugin.Configuration
         [JsonProperty("autoStart")]
         public bool AutoStart { get; set; } = false;
 
+        /// <summary>
+        /// How Revit failures in transactions run by MCP commands are handled.
+        /// </summary>
+        [JsonProperty("failureHandling")]
+        public FailureHandlingSettings FailureHandling { get; set; } = new FailureHandlingSettings();
+    }
+
+    /// <summary>
+    /// Policy applied by <see cref="Core.RevitFailureMonitor"/> to transactions run by MCP commands.
+    /// </summary>
+    public class FailureHandlingSettings
+    {
+        /// <summary>"suppress" (default): delete warnings and report them. "keep": leave them to Revit.</summary>
+        [JsonProperty("warnings")]
+        public string Warnings { get; set; } = "suppress";
+
+        /// <summary>"rollback" (default): roll the transaction back and report the errors. "ask_user": leave them to Revit's failure dialog.</summary>
+        [JsonProperty("errors")]
+        public string Errors { get; set; } = "rollback";
     }
 }

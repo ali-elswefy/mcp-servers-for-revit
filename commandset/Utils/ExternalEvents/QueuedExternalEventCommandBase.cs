@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using Autodesk.Revit.UI;
+using RevitMcp.Interop;
 using RevitMCPSDK.API.Base;
 using RevitMCPSDK.Exceptions;
 
@@ -47,11 +49,22 @@ namespace RevitMCPCommandSet.Utils.ExternalEvents
                 throw CommandErrors.EventRejected(invocation, raiseStatus.ToString());
             }
 
-            if (!invocation.WaitForCompletion(timeoutMs))
+            WaitResult wait = WaitWatchingForDialogs(invocation, timeoutMs, out RevitUiState uiState);
+            if (wait != WaitResult.Completed)
             {
                 InvocationState state = invocation.ResolveTimeout();
                 if (state != InvocationState.Completed)
                 {
+                    if (wait == WaitResult.BlockedByDialog)
+                    {
+                        CommandLog.Warning("{0} gave up after {1}ms in state {2}: Revit is blocked by {3}; {4}", invocation.LogTag,
+                            invocation.ElapsedMilliseconds, state, uiState.DescribeDialogs(),
+                            state == InvocationState.CancelledBeforeStart
+                                ? "cancelled, it will never run"
+                                : "it is running; the caller was told the outcome is unknown");
+                        throw CommandErrors.UserInputRequired(invocation, state, uiState, MayModifyModel);
+                    }
+
                     CommandLog.Warning("{0} wait expired after {1}ms in state {2}: {3}", invocation.LogTag, timeoutMs, state,
                         state == InvocationState.CancelledBeforeStart
                             ? "cancelled, it will never run"
@@ -76,6 +89,54 @@ namespace RevitMCPCommandSet.Utils.ExternalEvents
 
             CommandLog.Info("{0} returning result to the caller after {1}ms", invocation.LogTag, invocation.ElapsedMilliseconds);
             return invocation.Result;
+        }
+
+        private enum WaitResult { Completed, TimedOut, BlockedByDialog }
+
+        /// <summary>How often the wait checks for a modal dialog.</summary>
+        private const int DialogPollMs = 250;
+
+        /// <summary>How long a dialog must stay open before the caller gives up, so a dialog that is closing does not count.</summary>
+        private const int DialogGraceMs = 1500;
+
+        /// <summary>
+        /// Waits for the invocation, but stops early when a modal dialog keeps Revit blocked: while
+        /// one is open the request cannot start (or, if it opened the dialog itself, cannot finish)
+        /// until the user acts, so waiting out the full timeout only delays telling them.
+        /// </summary>
+        private static WaitResult WaitWatchingForDialogs(ExternalEventInvocation<TRequest, TResult> invocation, int timeoutMs, out RevitUiState uiState)
+        {
+            uiState = null;
+            var clock = Stopwatch.StartNew();
+            long blockedSinceMs = -1;
+
+            while (true)
+            {
+                long remainingMs = timeoutMs - clock.ElapsedMilliseconds;
+                if (remainingMs <= 0)
+                    return WaitResult.TimedOut;
+
+                if (invocation.WaitForCompletion((int)Math.Min(DialogPollMs, remainingMs)))
+                    return WaitResult.Completed;
+
+                RevitUiState state = RevitDialogDetector.Detect();
+                if (!state.ModalDialogOpen)
+                {
+                    blockedSinceMs = -1;
+                    continue;
+                }
+
+                if (blockedSinceMs < 0)
+                {
+                    blockedSinceMs = clock.ElapsedMilliseconds;
+                    CommandLog.Info("{0} Revit is blocked by {1} while waiting in state {2}", invocation.LogTag, state.DescribeDialogs(), invocation.State);
+                }
+                else if (clock.ElapsedMilliseconds - blockedSinceMs >= DialogGraceMs)
+                {
+                    uiState = state;
+                    return WaitResult.BlockedByDialog;
+                }
+            }
         }
     }
 }
