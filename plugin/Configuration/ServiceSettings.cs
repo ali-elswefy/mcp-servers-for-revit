@@ -40,12 +40,18 @@ namespace revit_mcp_plugin.Configuration
     /// </summary>
     public class FailureHandlingSettings
     {
-        /// <summary>"suppress" (default): delete warnings and report them. "keep": leave them to Revit.</summary>
+        /// <summary>
+        /// "halt" (default): roll back, stop the command and ask the user. "report": delete the
+        /// warning, commit and report it ("suppress" is the old name). "keep": leave it to Revit.
+        /// </summary>
         [JsonProperty("warnings")]
-        public string Warnings { get; set; } = "suppress";
+        public string Warnings { get; set; } = Core.RevitFailureMonitor.PolicyHalt;
 
-        /// <summary>"rollback" (default): roll the transaction back and report the errors. "ask_user": leave them to Revit's failure dialog.</summary>
+        /// <summary>
+        /// "halt" (default): roll back, stop the command and ask the user. "rollback": roll back the
+        /// failed transaction and let the command continue. "ask_user": leave it to Revit's failure dialog.
+        /// </summary>
         [JsonProperty("errors")]
-        public string Errors { get; set; } = "rollback";
+        public string Errors { get; set; } = Core.RevitFailureMonitor.PolicyHalt;
     }
 }

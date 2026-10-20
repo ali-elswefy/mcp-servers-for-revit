@@ -332,7 +332,7 @@ namespace revit_mcp_plugin.Core
                     // Also hands over failures from commands that finished after their caller stopped waiting.
                     return CommandExecutor.AttachFailureReport(
                         CreateSuccessResponse(request.Id, BuildHealthReport(request.GetParamsObject())),
-                        RevitFailureMonitor.Instance.TakeUndeliveredReport());
+                        RevitFailureMonitor.Instance.TakeUndeliveredReport()?.Payload);
                 }
 
                 // While a modal dialog is open Revit cannot run external events, so the command could
@@ -411,6 +411,9 @@ namespace revit_mcp_plugin.Core
         private void OnIdling(object sender, Autodesk.Revit.UI.Events.IdlingEventArgs e)
         {
             Interlocked.Exchange(ref _lastIdlingUtcTicks, DateTime.UtcNow.Ticks);
+
+            // The UI thread is free again, so any halted MCP command has returned.
+            RevitFailureMonitor.Instance.OnIdle();
         }
 
         /// <summary>
@@ -467,7 +470,8 @@ namespace revit_mcp_plugin.Core
             var failureHandling = new
             {
                 warnings = RevitFailureMonitor.Instance.WarningPolicy,
-                errors = RevitFailureMonitor.Instance.ErrorPolicy
+                errors = RevitFailureMonitor.Instance.ErrorPolicy,
+                blockAfterHalt = RevitFailureMonitor.Instance.CanBlockAfterHalt
             };
 
             return new { plugin, revitUi, revitUiThread = uiThread, failureHandling, logging };

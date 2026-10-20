@@ -53,6 +53,7 @@
     <ItemGroup>
         <Compile Include="..\shared\TraceLog.cs" Link="Utils\TraceLog.cs" />
         <Compile Include="..\shared\RevitDialogDetector.cs" Link="Utils\RevitDialogDetector.cs" />
+        <Compile Include="..\shared\McpInvocationMarker.cs" Link="Utils\McpInvocationMarker.cs" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
         <PackageReference Include="Nice3point.Revit.Build.Tasks" Version="2.*" />

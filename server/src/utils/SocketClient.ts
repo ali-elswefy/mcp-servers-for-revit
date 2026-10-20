@@ -1,6 +1,6 @@
 import * as net from "net";
 import { RevitCommandError } from "./errors.js";
-import { recordRevitFailures } from "./revitFailures.js";
+import { currentFailureResolutions, recordRevitFailures } from "./revitFailures.js";
 
 /**
  * Client-side wait for one command. Must stay above the add-in's maximum external-event wait
@@ -152,11 +152,18 @@ export class RevitClientConnection {
         // Generate the request ID.
         const requestId = this.generateRequestId();
 
+        // The user's decisions about failures from an earlier call travel with every command of this tool call.
+        const failureResolutions = currentFailureResolutions();
+        const commandParams =
+          failureResolutions?.length && params && typeof params === "object" && !Array.isArray(params)
+            ? { ...params, failureResolutions }
+            : params;
+
         // Create a JSON-RPC compliant request object.
         const commandObj = {
           jsonrpc: "2.0",
           method: command,
-          params: params,
+          params: commandParams,
           id: requestId,
         };
 

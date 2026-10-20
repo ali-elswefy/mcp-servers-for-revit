@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Autodesk.Revit.UI;
+using RevitMcp.Interop;
 using RevitMCPSDK.API.Interfaces;
 using RevitMCPSDK.Exceptions;
 
@@ -49,6 +50,8 @@ namespace RevitMCPCommandSet.Utils.ExternalEvents
                 string outcome;
                 try
                 {
+                    // Lets the plugin's failure monitor tell this invocation from the next one in the same callback.
+                    McpInvocationMarker.Begin();
                     delivered = invocation.TryComplete(Handle(app, invocation.Request));
                     outcome = "ok";
                 }

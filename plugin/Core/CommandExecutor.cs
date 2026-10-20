@@ -6,6 +6,7 @@ using RevitMCPSDK.Exceptions;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 
 namespace revit_mcp_plugin.Core
 {
@@ -41,6 +42,7 @@ namespace revit_mcp_plugin.Core
         // own kinds (timeout, validation, revit_state, ...) through CommandExecutionException data.
         public const string ErrorKindMethodNotFound = "method_not_found";
         public const string ErrorKindInternal = "internal";
+        public const string ErrorKindValidation = "validation";
 
         private readonly ICommandRegistry _commandRegistry;
         private readonly ILogger _logger;
@@ -78,34 +80,72 @@ namespace revit_mcp_plugin.Core
 
                 _logger.Info("req={0} cmd={1} dispatch", request.Id, request.Method);
 
-                // Execute the command. Revit failures raised by its transactions are reported with the response.
-                using (var failures = RevitFailureMonitor.Instance.BeginRequest(request.Id, request.Method))
+                // The user's decisions about failures reported by an earlier call (see RevitFailureMonitor).
+                JObject parameters = request.GetParamsObject();
+                Dictionary<Guid, string> resolutions;
+                try
                 {
+                    resolutions = RevitFailureMonitor.ParseResolutions(parameters?[RevitFailureMonitor.ResolutionsParameter]);
+                    parameters?.Remove(RevitFailureMonitor.ResolutionsParameter);
+                }
+                catch (FormatException ex)
+                {
+                    _logger.Warning("req={0} cmd={1} rejected: {2}", request.Id, request.Method, ex.Message);
+                    return Fail(outcome, request.Id, JsonRPCErrorCodes.InvalidParams, ex.Message,
+                        new { kind = ErrorKindValidation, command = request.Method, requestId = request.Id });
+                }
+                if (resolutions.Count > 0)
+                {
+                    _logger.Info("req={0} cmd={1} failureResolutions: {2}", request.Id, request.Method,
+                        string.Join(", ", resolutions.Select(pair => pair.Key + "=" + pair.Value)));
+                }
+
+                // Execute the command. Revit failures raised by its transactions are reported with the response.
+                using (var failures = RevitFailureMonitor.Instance.BeginRequest(request.Id, request.Method, resolutions))
+                {
+                    object result = null;
+                    Exception error = null;
                     try
                     {
-                        object result = command.Execute(request.GetParamsObject(), request.Id);
-                        _logger.Info("req={0} cmd={1} dispatch done ok in {2}ms", request.Id, request.Method, clock.ElapsedMilliseconds);
-
-                        return WithFailureReport(CreateSuccessResponse(request.Id, result), failures, request);
-                    }
-                    catch (Exception ex) when (FindCommandExecutionException(ex) is CommandExecutionException commandEx)
-                    {
-                        object data = commandEx.ErrorData ?? new { kind = ErrorKindInternal };
-                        string response = WithFailureReport(Fail(outcome, request.Id, commandEx.ErrorCode, commandEx.Message, data),
-                            failures, request);
-                        _logger.Warning("req={0} cmd={1} dispatch done in {2}ms: {3}: {4}",
-                            request.Id, request.Method, clock.ElapsedMilliseconds, outcome, commandEx.Message);
-                        return response;
+                        result = command.Execute(parameters, request.Id);
                     }
                     catch (Exception ex)
                     {
-                        _logger.Error("req={0} cmd={1} dispatch failed in {2}ms with an unexpected exception: {3}",
-                            request.Id, request.Method, clock.ElapsedMilliseconds, ex);
-                        return WithFailureReport(Fail(outcome, request.Id,
-                            JsonRPCErrorCodes.InternalError,
-                            ex.Message,
-                            new { kind = ErrorKindInternal }), failures, request);
+                        error = ex;
                     }
+
+                    // A failure that halted the command overrides whatever the command reported.
+                    RevitFailureMonitor.FailureReport report = failures.Finish();
+                    if (report != null && report.Halted)
+                        return Halted(outcome, request, report, result, error, clock);
+
+                    string response;
+                    if (error == null)
+                    {
+                        _logger.Info("req={0} cmd={1} dispatch done ok in {2}ms", request.Id, request.Method, clock.ElapsedMilliseconds);
+                        response = CreateSuccessResponse(request.Id, result);
+                    }
+                    else if (FindCommandExecutionException(error) is CommandExecutionException commandEx)
+                    {
+                        object data = commandEx.ErrorData ?? new { kind = ErrorKindInternal };
+                        response = Fail(outcome, request.Id, commandEx.ErrorCode, commandEx.Message, data);
+                        _logger.Warning("req={0} cmd={1} dispatch done in {2}ms: {3}: {4}",
+                            request.Id, request.Method, clock.ElapsedMilliseconds, outcome, commandEx.Message);
+                    }
+                    else
+                    {
+                        _logger.Error("req={0} cmd={1} dispatch failed in {2}ms with an unexpected exception: {3}",
+                            request.Id, request.Method, clock.ElapsedMilliseconds, error);
+                        response = Fail(outcome, request.Id, JsonRPCErrorCodes.InternalError, error.Message,
+                            new { kind = ErrorKindInternal });
+                    }
+
+                    if (report != null)
+                    {
+                        _logger.Info("req={0} cmd={1} response carries revitFailures", request.Id, request.Method);
+                        response = AttachFailureReport(response, report.Payload);
+                    }
+                    return response;
                 }
             }
             catch (Exception ex)
@@ -135,18 +175,45 @@ namespace revit_mcp_plugin.Core
         }
 
         /// <summary>
-        /// Adds "revitFailures" to the response envelope (next to "result" or "error") when Revit
-        /// reported failures in the command's transactions, including ones the failure handler
-        /// silenced. On the envelope it works for every result shape and for errors alike.
+        /// The command was halted by a Revit failure: return a "revit_failure" error that lists the
+        /// failures, Revit's fixes for them and what was already applied, so the agent stops and
+        /// asks the user. The message is complete on its own for clients that only show messages.
         /// </summary>
-        private string WithFailureReport(string response, RevitFailureMonitor.RequestFailures failures, JsonRPCRequest request)
+        private string Halted(CommandOutcome outcome, JsonRPCRequest request, RevitFailureMonitor.FailureReport report,
+            object result, Exception error, Stopwatch clock)
         {
-            object report = failures.BuildReport();
-            if (report == null)
-                return response;
+            var data = new JObject
+            {
+                ["kind"] = RevitFailureMonitor.ErrorKind,
+                ["reason"] = RevitFailureMonitor.ErrorReason,
+                ["command"] = request.Method,
+                ["requestId"] = request.Id
+            };
+            data.Merge(report.Payload);
 
-            _logger.Info("req={0} cmd={1} response carries revitFailures", request.Id, request.Method);
-            return AttachFailureReport(response, report);
+            bool applied = (data["appliedBeforeFailure"] as JArray)?.Count > 0;
+            data["executed"] = true;
+            data["modelMayHaveChanged"] = applied;
+            // Retrying is right only with the user's decision, never automatically.
+            data["retrySafe"] = false;
+
+            string message = report.Message;
+            if (result != null)
+            {
+                try
+                {
+                    data["commandResult"] = result as JToken ?? JToken.FromObject(result);
+                    message += " The command's own result is in commandResult; it may list changes that were rolled back.";
+                }
+                catch (Exception) { }
+            }
+            if (error != null)
+                data["commandError"] = FindCommandExecutionException(error)?.Message ?? error.Message;
+
+            string response = Fail(outcome, request.Id, JsonRPCErrorCodes.TransactionFailed, message, data);
+            _logger.Warning("req={0} cmd={1} halted by a Revit failure after {2}ms: {3}",
+                request.Id, request.Method, clock.ElapsedMilliseconds, report.Message);
+            return response;
         }
 
         /// <summary>Adds a "revitFailures" report to a serialized JSON-RPC response.</summary>

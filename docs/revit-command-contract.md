@@ -17,6 +17,7 @@ return a deterministic message, without asking the model to interpret a known fa
 | `revit_state` | add-in | No active document (`reason: no_active_document`) or view (`no_active_view`) | After the user fixes Revit's state |
 | `revit_unavailable` | add-in | Revit refused to queue the external event; not executed | Yes |
 | `user_input_required` | add-in | A modal dialog is open in Revit (`reason: modal_dialog_open`, `dialogs[]`). Revit cannot run any command until the user answers it | Only after the user confirms the dialog is closed; see below |
+| `revit_failure` | add-in | A Revit warning or error halted the command (`failures[]` with Revit's fixes, `appliedBeforeFailure`); see below | Only with the user's decision, via `failureResolutions` |
 | `execution` | add-in | The command threw inside Revit | Depends on the command |
 | `invalid_request`, `method_not_found`, `internal` | add-in | Protocol or unexpected errors | No |
 
@@ -74,53 +75,93 @@ windows only have a title.
 Clients must stop sending Revit commands and ask the user to deal with the dialog. They must not retry
 automatically. The Node server adds `stop: true` and an `instruction` to the tool result.
 
-## Revit failures in MCP transactions (`revitFailures`)
+## Revit failures in MCP transactions (`revit_failure`, `revitFailures`)
 
 The plugin handles Revit failures (warnings and errors raised when a transaction commits) for every transaction
-committed by command-set code, including transactions opened by `send_code_to_revit` snippets, so no failure
-dialog blocks Revit during an MCP command. Transactions the user runs in Revit are never touched. The policy is
-set in `Commands\commandRegistry.json` and applied when the service is switched on:
+committed by command-set code, including transactions opened by `send_code_to_revit` snippets. Transactions the
+user runs in Revit are never touched. No failure dialog is shown; instead the agent is told, and the user decides.
+
+### Default: halt and ask the user
+
+The first failure in a command, warning or error:
+
+1. **Rolls back** the transaction that failed, without a dialog.
+2. **Halts the command.** Every later change the same command tries to commit is blocked (rolled back) until Revit
+   is idle again, so a handler that loops over items cannot carry on past the failure. This uses an optional
+   dynamic updater; `health_check` reports `failureHandling.blockAfterHalt: false` if it could not be registered.
+3. **Returns a `revit_failure` error** (code `TransactionFailed`, `reason: failure_needs_user`, `retrySafe: false`).
+   Whatever the command itself returned is replaced, and is kept in `commandResult` or `commandError`.
 
 ```json
-"settings": { "failureHandling": { "warnings": "suppress", "errors": "rollback" } }
+{ "kind": "revit_failure", "reason": "failure_needs_user", "command": "create_line_based_element", "requestId": "...",
+  "halted": true, "rolledBackTransactions": 1, "blockedTransactions": 2, "modelMayHaveChanged": true, "retrySafe": false,
+  "failures": [
+    { "transaction": "Create Line-Based Element", "severity": "Warning",
+      "description": "Highlighted elements are joined but do not intersect.",
+      "failureId": "<guid>", "elementIds": [123, 456], "action": "halted", "canAccept": true,
+      "resolutions": [ { "caption": "Unjoin Elements", "type": "DetachElements", "isDefault": true } ] }
+  ],
+  "appliedBeforeFailure": [
+    { "transactions": ["Create Line-Based Element"], "addedElementIds": [789], "deletedElementIds": [], "modifiedElementCount": 3 }
+  ],
+  "retry": { "parameter": "failureResolutions", "example": [ { "failureId": "<guid>", "resolution": "Unjoin Elements" } ] } }
+```
+
+- `resolutions[]` are the fixes Revit itself offers for that failure, with the caption its dialog would show.
+  Captions are specific (`Unjoin Elements`, `Delete Instance(s)`, `Remove Constraints`), while `type` is Revit's
+  generic `FailureResolutionType`.
+- `canAccept` is true for warnings: the user may keep the change despite the warning. Errors cannot be accepted.
+- `appliedBeforeFailure` lists transactions this command committed before the failure. They remain in the model.
+- The error `message` holds all of this as text (failures, ids, fixes, what was applied, how to retry), for
+  clients that only show messages.
+
+**Clients must stop and ask the user**, showing each failure, its fixes and what was already applied. Then they
+repeat the call, covering only what was not applied, with the user's decisions:
+
+```json
+"failureResolutions": [ { "failureId": "<guid>", "resolution": "Unjoin Elements" } ]
+```
+
+`resolution` is a fix's `caption` or `type`, or `accept` for a warning. When that failure comes up again, the
+add-in applies the fix through Revit's own resolution (or deletes the accepted warning) and commits. If the fix is
+not offered, not permitted, or was already tried and the failure remained, the command halts again with a `note`
+on the failure. A malformed `failureResolutions` is a `validation` error and nothing runs. The Node server adds
+`failureResolutions` to every Revit tool and forwards it with each command of that call.
+
+### Policy
+
+Set in `Commands\commandRegistry.json` and applied when the service is switched on:
+
+```json
+"settings": { "failureHandling": { "warnings": "halt", "errors": "halt" } }
 ```
 
 | Setting | Value | Effect |
 | --- | --- | --- |
-| `warnings` | `suppress` (default) | Warnings are deleted, so no dialog appears and they are not kept in the model's warning list |
-| | `keep` | Warnings are left to Revit as usual |
-| `errors` | `rollback` (default) | A transaction with errors is rolled back without a dialog. Its changes are not applied |
-| | `ask_user` | Errors are left to Revit's failure dialog. The command then reports `user_input_required` |
+| `warnings` | `halt` (default) | As above |
+| | `report` | The warning is deleted, the change is committed, and the warning is reported in `revitFailures`. Warnings deleted this way are not kept in the model's warning list. (`suppress` is accepted as the old name.) |
+| | `keep` | Left to Revit as usual, and reported |
+| `errors` | `halt` (default) | As above |
+| | `rollback` | The failed transaction is rolled back and reported, and the command continues |
+| | `ask_user` | Left to Revit's failure dialog, so the command then reports `user_input_required` |
 
-Whenever failures were recorded, including ones the handler silenced, the JSON-RPC response carries a
-`revitFailures` object on the envelope, next to `result` or `error`. It is there for every result shape, and on
-errors too:
+### `revitFailures` (failures that did not halt the command)
 
-```json
-{ "jsonrpc": "2.0", "id": "...", "result": { ... },
-  "revitFailures": {
-    "silenced": true, "rolledBackTransactions": 1, "warningsSuppressed": 2, "warningsKept": 0, "errorsLeftToUser": 0,
-    "message": "Revit reported failures that the MCP failure handler resolved without showing the user a dialog. 1 transaction(s) had errors and were rolled back: ...",
-    "failures": [
-      { "transaction": "Create Level", "severity": "Error", "description": "...", "action": "rolled_back",
-        "failureId": "<guid>", "elementIds": [123456], "recordedUtc": "..." }
-    ]
-  } }
-```
-
-`silenced` is true when the handler suppressed a warning or rolled back a transaction, so the user saw nothing in
-Revit. `action` is `warning_suppressed`, `warning_kept`, `rolled_back` or `left_to_user`.
+When failures were handled without halting (a policy other than `halt`, a fix or `accept` applied on retry, or
+failures left over from an earlier command), the JSON-RPC response carries a `revitFailures` object on the envelope,
+next to `result` or `error`. It has the same `failures[]` entries, counts (`rolledBackTransactions`,
+`warningsReported`, `warningsKept`, `accepted`, `resolved`, `errorsLeftToUser`) and a `message`. `action` is one of
+`halted`, `rolled_back`, `warning_reported`, `warning_kept`, `accepted`, `resolved` (with `resolutionApplied`) or
+`left_to_user`.
 
 Failures raised while no request was waiting (a command that finished after its caller timed out or gave up on a
-dialog) are not lost. They are attached to the next response, either a command or `health_check`, and marked
-`earlier: true`. Each failure is reported once.
+dialog) are attached to the next response, either a command or `health_check`, and marked `earlier: true`. Each
+failure is reported once.
 
 The Node server puts every `revitFailures` report into a text block at the top of the tool result, starting
-`REVIT FAILURES:`, for every tool. Other clients should do the same rather than leave it to the model to find
-the field. Many commands do not check
-whether their transaction committed, so a rolled-back transaction can sit next to a result that lists elements
-as created. Clients should treat `rolledBackTransactions > 0` as authoritative. Failures are matched to requests
-by time: if a client sends several requests at once, each one sees all failures recorded while it ran.
+`REVIT FAILURES:`. Other clients should do the same. Failures are matched to requests by time: if a client sends
+several requests at once, each one sees all failures recorded while it ran, and their `failureResolutions` apply
+to all of them.
 
 ## `send_code_to_revit`
 
@@ -188,7 +229,7 @@ Parameters: `probeUiThread` (default `true`), `uiProbeTimeoutMs` (default 2000, 
     "probed": true, "responsive": true, "latencyMs": 12, "timeoutMs": 2000,
     "raiseStatus": "Accepted", "hasActiveDocument": true
   },
-  "failureHandling": { "warnings": "suppress", "errors": "rollback" },
+  "failureHandling": { "warnings": "halt", "errors": "halt", "blockAfterHalt": true },
   "logging": {
     "level": "Info", "directory": "...\\revit_mcp_plugin\\Logs",
     "protocolLog": "...\\mcp_protocol_20261004.log", "addinLog": "...\\mcp_addin_20261004.log"

@@ -45,7 +45,7 @@ namespace revit_mcp_plugin.Core
 
             // Failures from MCP transactions are handled without dialogs; see RevitFailureMonitor.
             RevitFailureMonitor.Instance.Configure(configManager.Config.Settings.FailureHandling);
-            RevitFailureMonitor.Instance.Subscribe(application.ControlledApplication);
+            RevitFailureMonitor.Instance.Startup(application);
             RevitDialogDetector.SetMainWindow(application.MainWindowHandle);
 
             if (configManager.Config.Settings.AutoStart)
@@ -99,7 +99,7 @@ namespace revit_mcp_plugin.Core
                     _controlledApplication.Idling -= StartServerOnIdle;
                 }
 
-                RevitFailureMonitor.Instance.Unsubscribe(application.ControlledApplication);
+                RevitFailureMonitor.Instance.Shutdown(application);
 
                 if (SocketService.Instance.IsRunning)
                 {

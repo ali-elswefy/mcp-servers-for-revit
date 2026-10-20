@@ -10,6 +10,7 @@ export type RevitErrorKind =
   | "revit_unavailable"
   | "execution"
   | "user_input_required"
+  | "revit_failure"
   | "invalid_request"
   | "method_not_found"
   | "internal";
@@ -66,6 +67,7 @@ export function revitErrorResult(operation: string, error: unknown) {
             ok: false,
             operation,
             ...(err.kind === "user_input_required" ? { stop: true, instruction: USER_INPUT_REQUIRED_INSTRUCTION } : {}),
+            ...(err.kind === "revit_failure" ? { stop: true, instruction: REVIT_FAILURE_INSTRUCTION } : {}),
             error: { kind: err.kind, code: err.code, message: err.detail, ...err.data },
           },
           null,
@@ -83,3 +85,13 @@ export function revitErrorResult(operation: string, error: unknown) {
 export const USER_INPUT_REQUIRED_INSTRUCTION =
   "Revit is waiting for the user to answer a dialog (see error.dialogs). Stop calling Revit tools, tell the user which dialog is open, " +
   "and wait for them to confirm they have dealt with it. Do not retry or work around it.";
+
+/**
+ * A Revit failure (warning or error) halted the command. The user decides how to handle it; the
+ * agent passes that decision back with `failureResolutions`.
+ */
+export const REVIT_FAILURE_INSTRUCTION =
+  "Revit reported a failure and the add-in stopped the command. Show the user each failure in error.failures: its description, " +
+  "the fixes Revit offers (resolutions[].caption), whether it can be accepted (canAccept), and what was already applied (error.appliedBeforeFailure). " +
+  "Ask the user which to do. Then call the same tool again, covering only what was not applied, with " +
+  "failureResolutions = [{ failureId, resolution }] holding exactly the user's choice. Do not pick a fix yourself and do not retry without the user's decision.";
